@@ -1,6 +1,21 @@
 (() => {
   "use strict";
 
+  const API_BASE = (() => {
+    // Prefer <base href>, fall back to /trace/ when hosted under idealabs.co
+    const b = document.querySelector("base");
+    if (b && b.href) {
+      try {
+        const u = new URL(b.href, window.location.origin);
+        return u.pathname.endsWith("/") ? u.pathname : u.pathname + "/";
+      } catch {
+        /* ignore */
+      }
+    }
+    if (window.location.pathname.startsWith("/trace")) return "/trace/";
+    return "/";
+  })();
+
   const $ = (id) => document.getElementById(id);
 
   const drop = $("drop");
@@ -199,7 +214,7 @@
     fd.append("format", "pdf");
 
     try {
-      const res = await fetch("/vectorize", { method: "POST", body: fd });
+      const res = await fetch(API_BASE + "vectorize", { method: "POST", body: fd });
       if (!res.ok) {
         let detail = res.statusText;
         try {
