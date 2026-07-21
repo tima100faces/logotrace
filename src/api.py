@@ -82,12 +82,14 @@ async def vectorize(
             fmt=fmt,
             geom=gl,
         )
+        payload, eff = payload  # unpack (bytes, float)
     except VectorizeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     headers = {
         "X-LogoTrace-Colors": str(n),
         "X-LogoTrace-Colors-Mode": cm,
+        "X-LogoTrace-Upscale": str(round(eff, 2)),
     }
     if fmt == "pdf":
         headers["Content-Disposition"] = 'attachment; filename="logotrace.pdf"'

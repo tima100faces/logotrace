@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import io
+import re
 import tempfile
 from pathlib import Path
+
+from PIL import Image
 
 from src.colors import COLORS_MODE_EXACT, COLORS_MODE_UP_TO
 from src.config import (
@@ -20,6 +24,45 @@ from src.verify import VerifyError, verify_vector_output
 
 class VectorizeError(RuntimeError):
     pass
+
+
+# ---- upscale policy (v4) ---------------------------------------------------
+
+UPSCALE_MAX_SIDE = 3072
+UPSCALE_MAX_PX = 9_500_000
+UPSCALE_MIN_EFFECTIVE = 1.05
+
+
+def _compute_upscale_factor(w: int, h: int) -> float:
+    """effective = max(1.0, min(2.0, 3072/max_side, sqrt(9.5M/(w*h))))"""
+    max_side = max(w, h)
+    total_px = w * h
+    effective = min(
+        2.0,
+        UPSCALE_MAX_SIDE / max_side,
+        (UPSCALE_MAX_PX / total_px) ** 0.5 if total_px > 0 else 2.0,
+    )
+    return max(1.0, effective)
+
+
+def _wrap_svg_scaled(svg_text: str, scale: float, orig_w: int, orig_h: int) -> str:
+    """Wrap SVG in <g transform='scale(1/s,…)'> and fix viewport to orig_w×orig_h."""
+    if scale <= 1.0:
+        return svg_text
+    inv = 1.0 / scale
+    svg_text = re.sub(r'width="\d+(\.\d+)?"', f'width="{orig_w}"', svg_text)
+    svg_text = re.sub(r'height="\d+(\.\d+)?"', f'height="{orig_h}"', svg_text)
+    svg_text = re.sub(
+        r'(<svg\b[^>]*>)',
+        rf'\1\n<g transform="scale({inv:.6f}, {inv:.6f})">',
+        svg_text,
+        count=1,
+    )
+    svg_text = svg_text.replace("</svg>", "</g>\n</svg>")
+    return svg_text
+
+
+# ---- public API ------------------------------------------------------------
 
 
 def _check_colors(colors: int) -> int:
@@ -45,8 +88,13 @@ def vectorize_to_svg(
     colors_mode: str = COLORS_MODE_UP_TO,
     filename_hint: str = "upload.bin",
     geom: str = "off",
-) -> tuple[str, list[tuple[int, int, int]]]:
-    """Core: raster → SVG string + extracted palette."""
+    upscale: bool = True,
+) -> tuple[str, list[tuple[int, int, int]], float]:
+    """Core: raster → SVG string + extracted palette + effective upscale factor.
+
+    upscale=True (default): apply auto upscale policy (≤ 2x, capped by memory).
+    upscale=False: no upscale (off escape hatch, factor=1.0).
+    """
     colors = _check_colors(colors)
     colors_mode = _check_colors_mode(colors_mode)
     if input_path is None and data is None:
@@ -55,28 +103,65 @@ def vectorize_to_svg(
     try:
         with tempfile.TemporaryDirectory(prefix="logotrace-") as tmp:
             tmpdir = Path(tmp)
+
+            # 0 ─ Determine source dimensions and upscale factor
+            if data is not None:
+                src_img = Image.open(io.BytesIO(data))
+            else:
+                src_img = Image.open(input_path)
+            orig_w, orig_h = src_img.size
+
+            if upscale:
+                eff = _compute_upscale_factor(orig_w, orig_h)
+            else:
+                eff = 1.0
+
+            if eff > UPSCALE_MIN_EFFECTIVE:
+                new_w = int(orig_w * eff)
+                new_h = int(orig_h * eff)
+                src_img = src_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                upscaled_path = tmpdir / "upscaled.png"
+                src_img.save(upscaled_path, format="PNG")
+                source: Path | bytes = upscaled_path
+            else:
+                eff = 1.0
+                if data is not None:
+                    source = data
+                else:
+                    source = Path(input_path)  # type: ignore[arg-type]
+                    if not source.is_file():
+                        raise VectorizeError(f"input not found: {source}")
+
+            # 1 ─ Palette + remap
             prepared = tmpdir / "prepared.png"
             svg_tmp = tmpdir / "out.svg"
-            if data is not None:
-                source: Path | bytes = data
-            else:
-                source = Path(input_path)  # type: ignore[arg-type]
-                if not source.is_file():
-                    raise VectorizeError(f"input not found: {source}")
-
             _path, palette, _mode = prepare_for_trace(
                 source, colors, prepared, colors_mode=colors_mode
             )
+
+            # 2 ─ VTracer (scale pixel-unit thresholds)
+            if eff > UPSCALE_MIN_EFFECTIVE:
+                speckle = max(1, int(max(2, VTRACER_FILTER_SPECKLE // 2) * eff))
+                seglen = min(10, max(3, int(VTRACER_SEGMENT_LENGTH * eff)))  # VTracer range [3.5,10]
+            else:
+                speckle = max(2, VTRACER_FILTER_SPECKLE // 2)
+                seglen = VTRACER_SEGMENT_LENGTH
+
             run_vtracer(
                 prepared,
                 svg_tmp,
                 colormode="color",
-                filter_speckle=max(2, VTRACER_FILTER_SPECKLE // 2),
-                segment_length=VTRACER_SEGMENT_LENGTH,
+                filter_speckle=speckle,
+                segment_length=seglen,
                 color_precision=8,
             )
+
+            # 3 ─ Postprocess + scale back viewport
             svg_text = finalize_svg(svg_tmp, geom=geom)
-            return svg_text, palette
+            if eff > 1.0:
+                svg_text = _wrap_svg_scaled(svg_text, eff, orig_w, orig_h)
+
+            return svg_text, palette, eff
     except (PreprocessError, TracerError) as exc:
         raise VectorizeError(str(exc)) from exc
 
@@ -89,6 +174,7 @@ def vectorize_file(
     output_path: Path | str | None = None,
     fmt: str = "pdf",
     geom: str = "off",
+    upscale: bool = True,
 ) -> Path:
     """Vectorize image file → PDF (default) or SVG."""
     fmt = fmt.lower().strip()
@@ -96,11 +182,12 @@ def vectorize_file(
         raise VectorizeError("fmt must be 'pdf' or 'svg'")
 
     input_path = Path(input_path)
-    svg_text, _palette = vectorize_to_svg(
+    svg_text, _palette, _eff = vectorize_to_svg(
         input_path=input_path,
         colors=colors,
         colors_mode=colors_mode,
         geom=geom,
+        upscale=upscale,
     )
 
     if output_path is None:
@@ -132,21 +219,26 @@ def vectorize_bytes(
     filename_hint: str = "upload.png",
     fmt: str = "pdf",
     geom: str = "off",
+    upscale: bool = True,
     debug_save: bool = True,
-) -> bytes:
-    """Vectorize raw bytes → PDF or SVG bytes. Optionally dumps to input/output."""
+) -> tuple[bytes, float]:
+    """Vectorize raw bytes → (PDF or SVG bytes, effective upscale factor).
+
+    Optionally dumps to input/output for debugging.
+    """
     fmt = fmt.lower().strip()
     if fmt not in ("pdf", "svg"):
         raise VectorizeError("fmt must be 'pdf' or 'svg'")
     if not data:
         raise VectorizeError("empty image payload")
 
-    svg_text, palette = vectorize_to_svg(
+    svg_text, palette, eff = vectorize_to_svg(
         data=data,
         colors=colors,
         colors_mode=colors_mode,
         filename_hint=filename_hint,
         geom=geom,
+        upscale=upscale,
     )
     if fmt == "svg":
         payload = svg_text.encode("utf-8")
@@ -184,4 +276,4 @@ def vectorize_bytes(
             )
         except Exception:
             pass
-    return payload
+    return payload, eff

@@ -42,6 +42,11 @@ def main(
         "-g",
         help="Geometry normalize: off (default) | basic | strict (experimental)",
     ),
+    upscale: bool = typer.Option(
+        True,
+        "--upscale/--no-upscale",
+        help="Auto upscale before trace (default: on, v4 policy; --no-upscale for off)",
+    ),
 ) -> None:
     """Convert a flat logo image to RGB vector PDF (SVG optional)."""
     fmt_l = fmt.lower().strip()
@@ -68,6 +73,7 @@ def main(
             output_path=out,
             fmt=fmt_l,
             geom=gl,
+            upscale=upscale,
         )
     except VectorizeError as exc:
         typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)

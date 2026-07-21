@@ -262,27 +262,36 @@ def evaluate_sample(
     with tempfile.TemporaryDirectory(prefix="logotrace-eval-") as tmp:
         tmpdir = Path(tmp)
 
-        # 1 ─ Upscale preprocess (if requested)
-        upscaled_img, effective_scale = _upscale_image(src_img, upscale)
-        if effective_scale > 1.0:
-            up_path = tmpdir / "upscaled.png"
-            upscaled_img.save(up_path, format="PNG")
-            pipeline_input: Path | str = up_path
+        # 1 ─ Upscale preprocess
+        pipeline_input: Path | str = input_path
+        if upscale in ("auto", "off"):
+            effective_scale = 1.0
         else:
-            pipeline_input = input_path
+            _up_img, effective_scale = _upscale_image(src_img, upscale)
+            if effective_scale > 1.0:
+                up_path = tmpdir / "upscaled.png"
+                _up_img.save(up_path, format="PNG")
+                pipeline_input = up_path
 
         # 2 ─ Run pipeline → SVG + canonical ink palette
-        # Apply VTracer threshold scaling (pixel-unit params only)
+        # For off/auto: let pipeline handle upscale (or not).
+        # For explicit variants: eval handles upscale, pipeline gets upscale=False.
+        pipe_upscale = upscale in ("auto",)
         _saved_speckle = _cfg.VTRACER_FILTER_SPECKLE
         _saved_seglen = _cfg.VTRACER_SEGMENT_LENGTH
-        if vtracer_threshold_scale > 1.0:
+        # For manual upscale variants, apply threshold scaling
+        if vtracer_threshold_scale > 1.0 and not pipe_upscale:
             _cfg.VTRACER_FILTER_SPECKLE = max(1, int(_cfg.VTRACER_FILTER_SPECKLE * vtracer_threshold_scale))
             _cfg.VTRACER_SEGMENT_LENGTH = max(1, int(_cfg.VTRACER_SEGMENT_LENGTH * vtracer_threshold_scale))
         try:
-            svg_text, inks = vectorize_to_svg(
+            svg_text, inks, pipe_eff = vectorize_to_svg(
                 input_path=pipeline_input, colors=colors,
                 colors_mode=colors_mode, geom=geom,
+                upscale=pipe_upscale,
             )
+            # If pipeline handled upscale, use its effective_scale
+            if pipe_upscale:
+                effective_scale = pipe_eff
         except VectorizeError as exc:
             _cfg.VTRACER_FILTER_SPECKLE = _saved_speckle
             _cfg.VTRACER_SEGMENT_LENGTH = _saved_seglen
@@ -303,8 +312,8 @@ def evaluate_sample(
         _cfg.VTRACER_FILTER_SPECKLE = _saved_speckle
         _cfg.VTRACER_SEGMENT_LENGTH = _saved_seglen
 
-        # 3 ─ Scale SVG coords back if upscaled
-        if effective_scale > 1.0:
+        # 3 ─ Scale SVG coords back if EVAL upscaled (pipeline already wraps)
+        if effective_scale > 1.0 and not pipe_upscale:
             svg_text = _wrap_svg_scaled(svg_text, effective_scale, w, h)
 
         svg_bytes = len(svg_text.encode("utf-8"))
@@ -677,10 +686,14 @@ def run_matrix(
         results = []
         for i, sp in enumerate(samples, 1):
             print(f"  [{i}/{len(samples)}] {sp.name} …", end=" ", flush=True)
-            # thresh_scale: use effective_scale from upscale result, or 1.0 for off
-            from src.eval import _upscale_image as _up
-            _, eff = _up(load_image(sp), upscale_val)
-            thresh = thresh_override if thresh_override is not None else eff
+
+            # For 'auto': pipeline handles upscale internally, no pre-compute needed
+            if upscale_val == "auto":
+                thresh = 1.0
+            else:
+                from src.eval import _upscale_image as _up
+                _, eff = _up(load_image(sp), upscale_val)
+                thresh = thresh_override if thresh_override is not None else eff
 
             r = evaluate_sample(
                 sp, colors=colors, colors_mode=colors_mode, geom=geom,
