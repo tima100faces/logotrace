@@ -28,6 +28,18 @@ def test_health():
     assert r.json()["status"] == "ok"
 
 
+def test_index_and_static():
+    client = TestClient(app)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "LogoTrace" in r.text
+    assert "text/html" in r.headers.get("content-type", "")
+    css = client.get("/static/styles.css")
+    assert css.status_code == 200
+    js = client.get("/static/app.js")
+    assert js.status_code == 200
+
+
 def test_vectorize_endpoint_pdf():
     path = _ensure_fixture()
     client = TestClient(app)

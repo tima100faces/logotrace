@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from src.colors import COLORS_MODE_AUTO, resolve_palette_policy
 from src.config import DEFAULT_COLORS, MAX_UPLOAD_BYTES
 from src.geometry import GEOM_BASIC, GEOM_OFF, GEOM_STRICT
 from src.pipeline import VectorizeError, vectorize_bytes
+
+STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 
 app = FastAPI(
     title="LogoTrace",
@@ -17,6 +22,17 @@ app = FastAPI(
         "Legacy: colors + colors_mode=up_to|exact|auto."
     ),
 )
+
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/")
+def index() -> FileResponse:
+    index_path = STATIC_DIR / "index.html"
+    if not index_path.is_file():
+        raise HTTPException(status_code=404, detail="UI not found")
+    return FileResponse(index_path)
 
 
 @app.get("/health")
@@ -40,7 +56,6 @@ async def vectorize(
     if gl not in (GEOM_OFF, GEOM_BASIC, GEOM_STRICT):
         raise HTTPException(status_code=400, detail="geom must be off|basic|strict")
 
-    # Prefer legacy `colors` when provided; else UI `palette`.
     raw = colors if (colors is not None and str(colors).strip() != "") else palette
     try:
         n, cm = resolve_palette_policy(

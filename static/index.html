@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LogoTrace</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <h1>LogoTrace</h1>
+      </div>
+      <p class="tag">Flat logo → print-ready PDF</p>
+    </header>
+
+    <main class="grid">
+      <section class="panel input-panel">
+        <div
+          id="drop"
+          class="drop"
+          tabindex="0"
+          role="button"
+          aria-label="Drop, click, or paste an image"
+        >
+          <div id="drop-empty" class="drop-empty">
+            <p class="drop-title">Drop image here</p>
+            <p class="drop-sub">or click to browse · paste with <kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd></p>
+          </div>
+          <img id="preview-in" class="preview-in hidden" alt="Source preview" />
+        </div>
+        <input id="file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
+
+        <div class="row meta-row">
+          <span id="file-label" class="muted">No file</span>
+          <button type="button" id="btn-clear" class="btn ghost hidden">Clear</button>
+        </div>
+
+        <div class="field">
+          <label class="label">Colors</label>
+          <div class="seg" id="palette-seg" role="group" aria-label="Color count">
+            <button type="button" class="seg-btn active" data-palette="auto">Auto</button>
+            <button type="button" class="seg-btn" data-palette="1">1</button>
+            <button type="button" class="seg-btn" data-palette="2">2</button>
+            <button type="button" class="seg-btn" data-palette="3">3</button>
+            <button type="button" class="seg-btn" data-palette="4">4</button>
+          </div>
+          <p class="hint">Auto smart-detects. Pick a number for exact ink count.</p>
+        </div>
+
+        <button type="button" id="btn-run" class="btn primary" disabled>Convert to PDF</button>
+        <p id="status" class="status" role="status"></p>
+      </section>
+
+      <section class="panel out-panel">
+        <div class="out-head">
+          <label class="label">Result</label>
+          <div class="out-actions">
+            <a id="btn-download" class="btn primary small hidden" download="logotrace.pdf">Download PDF</a>
+          </div>
+        </div>
+        <div id="out-empty" class="out-empty">
+          <p>PDF preview appears here</p>
+        </div>
+        <iframe id="pdf-frame" class="pdf-frame hidden" title="PDF preview"></iframe>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span>JPEG / PNG · RGB PDF · local</span>
+    </footer>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

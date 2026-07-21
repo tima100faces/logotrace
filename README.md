@@ -36,10 +36,13 @@ PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.svg --format svg
 - `--geom off|basic|strict` — path normalize (**default off**; basic/strict experimental)
 - JPEG first-class. Transparent PNG alpha preserved when present.
 
-## API (localhost)
+## API + UI (localhost)
 
 ```bash
 PYTHONPATH=/root/logotrace uvicorn src.api:app --host 127.0.0.1 --port 8095
+
+# UI
+open http://127.0.0.1:8095/
 
 curl -s http://127.0.0.1:8095/health
 # UI contract:
@@ -49,6 +52,8 @@ curl -s -F "file=@logo.jpg" -F "palette=2" -F "format=pdf" \
   http://127.0.0.1:8095/vectorize -o out.pdf
 # Response headers: X-LogoTrace-Colors, X-LogoTrace-Colors-Mode
 ```
+
+Web UI (English, light): drop / click / **paste** · Colors Auto|1–4 · PDF preview + download.
 
 | `palette` | Meaning |
 |-----------|---------|
