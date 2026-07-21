@@ -8,6 +8,7 @@ from PIL import Image, ImageFilter
 
 from src.colors import COLORS_MODE_UP_TO, analyze_palette, remap_to_palette
 from src.config import MAX_COLORS, MIN_COLORS
+from src.disks import snap_disks_in_label_image
 
 
 class PreprocessError(ValueError):
@@ -129,8 +130,15 @@ def prepare_for_trace(
         mode=analysis.mode,
         keep_alpha=keep_alpha,
     )
-    # NOTE: morphological edge smooth removed — it faceted large circles/text (sample_08).
-    # Gradient crush alone is enough for banding; keep hard labels for VTracer splines.
+    # Snap large badge-like disks to true circles before trace (sample_08).
+    prepared = snap_disks_in_label_image(prepared)
+    # Mild upscale helps JPEG contours before VTracer.
+    max_side = max(prepared.size)
+    if max_side < 2800:
+        prepared = prepared.resize(
+            (prepared.width * 2, prepared.height * 2),
+            Image.Resampling.NEAREST,  # keep hard labels; no new gray edges
+        )
 
     dest_path = Path(dest_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)

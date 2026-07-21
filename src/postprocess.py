@@ -1,12 +1,17 @@
-"""SVG post-process: optional svgo + geometry normalize."""
+"""SVG post-process: optional svgo + geometry normalize / circle snap."""
 from __future__ import annotations
 
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
-from src.geometry import normalize_svg_geometry
+from src.geometry import (
+    GEOM_OFF,
+    normalize_svg_geometry,
+    snap_nearly_circular_paths,
+)
 
 
 class PostprocessError(RuntimeError):
@@ -24,12 +29,9 @@ def read_svg(path: Path | str) -> str:
 
 
 def maybe_svgo(svg_text: str) -> str:
-    """Run svgo on temp content if available."""
     svgo = shutil.which("svgo")
     if not svgo:
         return svg_text
-    import tempfile
-
     try:
         with tempfile.TemporaryDirectory(prefix="logotrace-svgo-") as tmp:
             p = Path(tmp) / "in.svg"
@@ -51,5 +53,10 @@ def maybe_svgo(svg_text: str) -> str:
 def finalize_svg(svg_path: Path | str, *, geom: str = "off") -> str:
     text = read_svg(svg_path)
     text = maybe_svgo(text)
-    text = normalize_svg_geometry(text, level=geom)
+    level = (geom or GEOM_OFF).lower().strip()
+    if level == GEOM_OFF:
+        # Gentle: only snap large near-disks to true circles (sample_08 badge).
+        text = snap_nearly_circular_paths(text)
+    else:
+        text = normalize_svg_geometry(text, level=level)
     return text

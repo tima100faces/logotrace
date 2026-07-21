@@ -66,9 +66,12 @@ def vectorize_to_svg(
             _path, palette, _mode = prepare_for_trace(
                 source, colors, prepared, colors_mode=colors_mode
             )
+            # Mono after gradient-crush → bw tracer is cleaner for disks/text
+            colormode = "bw" if len(palette) == 1 else "color"
             run_vtracer(
                 prepared,
                 svg_tmp,
+                colormode=colormode,
                 filter_speckle=max(2, VTRACER_FILTER_SPECKLE // 2),
                 color_precision=8,
             )

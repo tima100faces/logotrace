@@ -313,6 +313,92 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
+def snap_nearly_circular_paths(
+    svg_text: str,
+    *,
+    min_circularity: float = 0.88,
+    min_area_frac: float = 0.04,
+) -> str:
+    """
+    Replace large near-circular filled paths with true circles.
+    Helps JPEG→hard-mask disks that VTracer slightly eggs.
+    Small organic shards are left untouched.
+    """
+    decl = ""
+    body = svg_text
+    m = re.match(r"^\s*(<\?xml[^?]*\?>)\s*", svg_text)
+    if m:
+        decl = m.group(1) + "\n"
+        body = svg_text[m.end() :]
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        return svg_text
+
+    # canvas area
+    try:
+        cw = float(root.get("width", "0") or 0)
+        ch = float(root.get("height", "0") or 0)
+    except ValueError:
+        cw = ch = 0.0
+    canvas_area = cw * ch if cw > 0 and ch > 0 else 0.0
+
+    for el in root.iter():
+        if _local(el.tag).lower() != "path":
+            continue
+        d = el.get("d")
+        if not d:
+            continue
+        polys = _polygonize_path_d(d)
+        if len(polys) != 1:
+            continue
+        poly = polys[0]
+        if len(poly) < 12:
+            continue
+        closed = abs(poly[0][0] - poly[-1][0]) < 0.5 and abs(poly[0][1] - poly[-1][1]) < 0.5
+        if not closed:
+            continue
+        body_pts = poly[:-1] if closed else poly
+        # area (shoelace) and perimeter
+        area = 0.0
+        per = 0.0
+        n = len(body_pts)
+        for i in range(n):
+            x1, y1 = body_pts[i]
+            x2, y2 = body_pts[(i + 1) % n]
+            area += x1 * y2 - x2 * y1
+            per += math.hypot(x2 - x1, y2 - y1)
+        area = abs(area) / 2.0
+        if per < 1e-6 or area < 1e-6:
+            continue
+        if canvas_area > 0 and area / canvas_area < min_area_frac:
+            continue
+        circ = 4.0 * math.pi * area / (per * per)
+        if circ < min_circularity:
+            continue
+        fit = _fit_circle(body_pts)
+        if fit is None:
+            continue
+        cx, cy, r = fit
+        # Apply path-local coords; keep existing translate transform on element
+        x0, y0 = cx + r, cy
+        el.set(
+            "d",
+            f"M {x0:.2f} {y0:.2f} "
+            f"A {r:.2f} {r:.2f} 0 1 1 {cx - r:.2f} {cy:.2f} "
+            f"A {r:.2f} {r:.2f} 0 1 1 {x0:.2f} {y0:.2f} Z",
+        )
+
+    try:
+        ET.register_namespace("", "http://www.w3.org/2000/svg")
+    except Exception:
+        pass
+    out = ET.tostring(root, encoding="unicode")
+    if decl and not out.lstrip().startswith("<?xml"):
+        out = decl + out
+    return out
+
+
 def normalize_svg_geometry(svg_text: str, level: str = GEOM_OFF) -> str:
     level = (level or GEOM_OFF).lower().strip()
     if level not in (GEOM_OFF, GEOM_BASIC, GEOM_STRICT):

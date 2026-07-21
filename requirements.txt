@@ -7,3 +7,4 @@ pytest>=8.0
 httpx>=0.27
 numpy>=1.26
 cairosvg>=2.7
+scipy>=1.11
