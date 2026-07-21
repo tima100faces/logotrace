@@ -115,7 +115,7 @@ def test_geom_basic_reduces_nodes():
 
 
 def test_vectorize_svg_string(tiny_logo: Path):
-    svg, pal = vectorize_to_svg(input_path=tiny_logo, colors=2, geom=GEOM_BASIC)
+    svg, pal = vectorize_to_svg(input_path=tiny_logo, colors=2, geom=GEOM_OFF)
     assert "<svg" in svg.lower()
     assert "</svg>" in svg.lower()
     assert len(pal) >= 1
@@ -123,13 +123,13 @@ def test_vectorize_svg_string(tiny_logo: Path):
 
 def test_vectorize_file_pdf(tiny_logo: Path, tmp_path: Path):
     out = tmp_path / "out.pdf"
-    path = vectorize_file(tiny_logo, colors=2, output_path=out, fmt="pdf", geom=GEOM_BASIC)
+    path = vectorize_file(tiny_logo, colors=2, output_path=out, fmt="pdf", geom=GEOM_OFF)
     assert path == out
     assert out.read_bytes().startswith(b"%PDF")
 
 
 def test_vectorize_bytes_pdf(tiny_logo: Path):
-    data = vectorize_bytes(tiny_logo.read_bytes(), colors=2, fmt="pdf", geom="off")
+    data = vectorize_bytes(tiny_logo.read_bytes(), colors=2, fmt="pdf", geom=GEOM_OFF)
     assert data.startswith(b"%PDF")
 
 
@@ -146,7 +146,7 @@ def test_multi_color_samples_keep_multiple_fills(name: str, tmp_path: Path):
     if not src.is_file():
         pytest.skip("sample missing")
     svg_path = tmp_path / f"{name}.svg"
-    vectorize_file(src, colors=4, output_path=svg_path, fmt="svg", geom=GEOM_BASIC)
+    vectorize_file(src, colors=4, output_path=svg_path, fmt="svg", geom=GEOM_OFF)
     svg = svg_path.read_text(encoding="utf-8")
     fills = set(re.findall(r'fill="(#[0-9A-Fa-f]{6})"', svg, flags=re.I))
     ink = []

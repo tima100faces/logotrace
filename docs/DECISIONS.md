@@ -182,10 +182,12 @@ Do **not** optimize for photo fidelity or automatic circle/star recognition in M
 **Context:** VTracer splines wobble on straights and mess rounded corners.
 
 **Decision:**
-- Post-SVG: `geom=basic` default (RDP + collinear)
-- `strict` adds circle fit when stable
-- `off` keeps raw VTracer paths
+- Post-SVG geometry is **opt-in only** (`geom=off` default) — basic RDP ruined roundovers
+- `basic` / `strict` remain experimental flags
+- `off` keeps raw VTracer splines (production quality path after 2026-07-21 rollback of default)
 - Not a full Vectorizer shape engine
+
+**Changed 2026-07-21:** default flipped `basic` → `off` after user QA (straights on curves).
 
 ---
 

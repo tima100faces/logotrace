@@ -37,10 +37,10 @@ def main(
         help="Output format: pdf (default) or svg (debug)",
     ),
     geom: str = typer.Option(
-        GEOM_BASIC,
+        GEOM_OFF,
         "--geom",
         "-g",
-        help="Geometry normalize: off | basic (default) | strict",
+        help="Geometry normalize: off (default) | basic | strict (experimental)",
     ),
 ) -> None:
     """Convert a flat logo image to RGB vector PDF (SVG optional)."""

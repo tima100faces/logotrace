@@ -22,7 +22,7 @@ async def vectorize(
     colors: int = Form(DEFAULT_COLORS),
     colors_mode: str = Form(COLORS_MODE_UP_TO),
     format: str = Form("pdf"),
-    geom: str = Form(GEOM_BASIC),
+    geom: str = Form(GEOM_OFF),
 ) -> Response:
     if colors < MIN_COLORS or colors > MAX_COLORS:
         raise HTTPException(

@@ -29,7 +29,7 @@ PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.svg --format svg
 
 - `--colors N` — palette size (default **4**)
 - `--colors-mode up_to|exact` — at most N vs collapse to N by mass
-- `--geom off|basic|strict` — path normalize (default **basic**)
+- `--geom off|basic|strict` — path normalize (**default off**; basic/strict experimental)
 - JPEG first-class. Transparent PNG alpha preserved when present.
 
 ## API (localhost)
