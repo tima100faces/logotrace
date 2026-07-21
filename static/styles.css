@@ -241,6 +241,19 @@ kbd {
 }
 .btn.ghost:hover:not(:disabled) { color: var(--ink); background: rgba(0,0,0,.04); }
 .btn.small { padding: 8px 12px; font-size: 13px; }
+.btn.icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1;
+}
+.btn.tiny {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
 
 #btn-run { width: 100%; margin-top: 4px; }
 
@@ -259,8 +272,33 @@ kbd {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
 }
 .out-head .label { margin: 0; }
+.out-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.zoom-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #f0efe9;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 3px;
+}
+.zoom-label {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+}
 .out-empty {
   flex: 1;
   border: 1px solid var(--line);
@@ -272,13 +310,28 @@ kbd {
   color: var(--muted);
   font-size: 15px;
 }
-.pdf-frame {
+.out-stage {
   flex: 1;
-  width: 100%;
+  min-height: 360px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  background: #fafaf7;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px;
+  outline: none;
+}
+.out-stage:focus-visible {
+  border-color: var(--ink);
+}
+#pdf-canvas {
+  display: block;
   background: #fff;
-  min-height: 360px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.04);
+  border-radius: 2px;
+  max-width: none;
 }
 
 .foot {

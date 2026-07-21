@@ -2,7 +2,6 @@
   "use strict";
 
   const API_BASE = (() => {
-    // Prefer <base href>, fall back to /trace/ when hosted under idealabs.co
     const b = document.querySelector("base");
     if (b && b.href) {
       try {
@@ -28,7 +27,13 @@
   const btnDownload = $("btn-download");
   const statusEl = $("status");
   const outEmpty = $("out-empty");
-  const pdfFrame = $("pdf-frame");
+  const outStage = $("out-stage");
+  const canvas = $("pdf-canvas");
+  const zoomBar = $("zoom-bar");
+  const zoomLabel = $("zoom-label");
+  const btnZoomIn = $("zoom-in");
+  const btnZoomOut = $("zoom-out");
+  const btnZoomFit = $("zoom-fit");
   const seg = $("palette-seg");
 
   /** @type {File|null} */
@@ -36,6 +41,14 @@
   let palette = "auto";
   /** @type {string|null} */
   let pdfObjectUrl = null;
+  /** @type {import('pdfjs-dist').PDFDocumentProxy|null} */
+  let pdfDoc = null;
+  /** @type {ArrayBuffer|null} */
+  let pdfData = null;
+  let fitScale = 1;
+  let userZoom = 1;
+  let renderToken = 0;
+  let pdfjsReady = null;
 
   function setStatus(msg, kind) {
     statusEl.textContent = msg || "";
@@ -43,16 +56,46 @@
     if (kind) statusEl.classList.add(kind);
   }
 
+  function ensurePdfJs() {
+    if (pdfjsReady) return pdfjsReady;
+    pdfjsReady = new Promise((resolve, reject) => {
+      const start = Date.now();
+      (function tick() {
+        if (window.pdfjsLib) {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+          resolve(window.pdfjsLib);
+          return;
+        }
+        if (Date.now() - start > 15000) {
+          reject(new Error("PDF preview library failed to load"));
+          return;
+        }
+        setTimeout(tick, 40);
+      })();
+    });
+    return pdfjsReady;
+  }
+
   function revokePdf() {
     if (pdfObjectUrl) {
       URL.revokeObjectURL(pdfObjectUrl);
       pdfObjectUrl = null;
     }
-    pdfFrame.src = "about:blank";
-    pdfFrame.classList.add("hidden");
+    pdfDoc = null;
+    pdfData = null;
+    userZoom = 1;
+    fitScale = 1;
+    const ctx = canvas.getContext("2d");
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    canvas.width = 0;
+    canvas.height = 0;
+    outStage.classList.add("hidden");
+    zoomBar.classList.add("hidden");
     outEmpty.classList.remove("hidden");
     btnDownload.classList.add("hidden");
     btnDownload.removeAttribute("href");
+    zoomLabel.textContent = "100%";
   }
 
   function setFile(file) {
@@ -111,12 +154,68 @@
         return true;
       }
     } catch {
-      /* permission / unsupported — fall through to paste event */
+      /* ignore */
     }
     return false;
   }
 
-  // Segmented control
+  function updateZoomLabel() {
+    zoomLabel.textContent = `${Math.round(userZoom * 100)}%`;
+  }
+
+  function computeFitScale(page) {
+    const base = page.getViewport({ scale: 1 });
+    const pad = 32;
+    const aw = Math.max(120, outStage.clientWidth - pad);
+    const ah = Math.max(120, outStage.clientHeight - pad);
+    const sx = aw / base.width;
+    const sy = ah / base.height;
+    return Math.min(sx, sy, 2.5);
+  }
+
+  async function renderPage() {
+    if (!pdfDoc) return;
+    const token = ++renderToken;
+    const page = await pdfDoc.getPage(1);
+    if (token !== renderToken) return;
+
+    fitScale = computeFitScale(page);
+    const scale = fitScale * userZoom;
+    const viewport = page.getViewport({ scale });
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    canvas.width = Math.floor(viewport.width * dpr);
+    canvas.height = Math.floor(viewport.height * dpr);
+    canvas.style.width = `${Math.floor(viewport.width)}px`;
+    canvas.style.height = `${Math.floor(viewport.height)}px`;
+
+    const ctx = canvas.getContext("2d", { alpha: false });
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, viewport.width, viewport.height);
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    if (token !== renderToken) return;
+    updateZoomLabel();
+  }
+
+  async function showPdf(blob) {
+    const pdfjsLib = await ensurePdfJs();
+    pdfData = await blob.arrayBuffer();
+    pdfDoc = await pdfjsLib.getDocument({ data: pdfData.slice(0) }).promise;
+    outEmpty.classList.add("hidden");
+    outStage.classList.remove("hidden");
+    zoomBar.classList.remove("hidden");
+    userZoom = 1;
+    await renderPage();
+  }
+
+  function setZoom(next) {
+    userZoom = Math.min(6, Math.max(0.25, next));
+    renderPage();
+  }
+
   seg.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-palette]");
     if (!btn) return;
@@ -124,7 +223,6 @@
     seg.querySelectorAll(".seg-btn").forEach((b) => b.classList.toggle("active", b === btn));
   });
 
-  // Drop / click
   drop.addEventListener("click", () => {
     if (!currentFile) fileInput.click();
   });
@@ -164,11 +262,9 @@
     clearFile();
   });
 
-  // Paste: global so it works without focusing the drop zone
   window.addEventListener("paste", (e) => {
     const cd = e.clipboardData;
     if (!cd) return;
-    // Prefer image items
     if (cd.files && cd.files.length) {
       for (const f of cd.files) {
         if (f.type.startsWith("image/")) {
@@ -191,15 +287,47 @@
     }
   });
 
-  // Optional: Ctrl/Cmd+Shift+V could force clipboard API — regular V uses paste event
   window.addEventListener("keydown", (e) => {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === "v") {
-      // Let paste event handle; if nothing fires, try async read shortly after
       setTimeout(() => {
         if (!currentFile) tryClipboardRead();
       }, 50);
     }
+    if (!pdfDoc) return;
+    if (e.key === "+" || e.key === "=") {
+      e.preventDefault();
+      setZoom(userZoom * 1.2);
+    } else if (e.key === "-" || e.key === "_") {
+      e.preventDefault();
+      setZoom(userZoom / 1.2);
+    } else if (e.key === "0" && mod) {
+      e.preventDefault();
+      setZoom(1);
+    }
+  });
+
+  btnZoomIn.addEventListener("click", () => setZoom(userZoom * 1.25));
+  btnZoomOut.addEventListener("click", () => setZoom(userZoom / 1.25));
+  btnZoomFit.addEventListener("click", () => setZoom(1));
+
+  outStage.addEventListener(
+    "wheel",
+    (e) => {
+      if (!pdfDoc) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? 1 / 1.12 : 1.12;
+      setZoom(userZoom * factor);
+    },
+    { passive: false }
+  );
+
+  let resizeTimer = 0;
+  window.addEventListener("resize", () => {
+    if (!pdfDoc) return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => renderPage(), 120);
   });
 
   async function convert() {
@@ -237,11 +365,10 @@
       }
 
       pdfObjectUrl = URL.createObjectURL(blob);
-      pdfFrame.src = pdfObjectUrl;
-      pdfFrame.classList.remove("hidden");
-      outEmpty.classList.add("hidden");
       btnDownload.href = pdfObjectUrl;
       btnDownload.classList.remove("hidden");
+
+      await showPdf(blob);
 
       const mode = res.headers.get("X-LogoTrace-Colors-Mode") || "";
       const n = res.headers.get("X-LogoTrace-Colors") || "";
