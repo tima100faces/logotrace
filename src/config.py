@@ -11,6 +11,7 @@ TRACE_TIMEOUT_SEC = 120
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 # VTracer defaults tuned for flat logos (poster-like)
 VTRACER_FILTER_SPECKLE = 4
+VTRACER_SEGMENT_LENGTH = 10  # px, subdivide splines until all segments < this
 VTRACER_COLOR_PRECISION = 6
 VTRACER_MODE = "spline"
 VTRACER_HIERARCHICAL = "stacked"

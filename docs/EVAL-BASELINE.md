@@ -6,7 +6,40 @@
 
 ---
 
-## v3 (current — background as first-class mask class)
+## v4 (current default — auto upscale + threshold scaling)
+
+**Policy:** `effective = min(2x, 3072/max_side, √(9.5M/total_px))`, skip if < 1.05x.
+**VTracer thresholds:** `filter_speckle` × effective, `segment_length` × effective.
+Angular params (corner, splice) unchanged.
+
+| # | Sample | Size | Eff. | IoU mean | IoU aw | Chamfer | Nodes | SVG KB | Time |
+|---|--------|------|------|----------|--------|---------|-------|--------|------|
+| 1 | sample_01 | 1340×1276 | 2.0x | 0.989 | 0.989 | 0.11 | 4315 | 152.2 | 3.5s |
+| 2 | sample_02 | 904×946 | 2.0x | 0.753 | 0.973 | 0.16 | 3234 | 108.9 | 1.7s |
+| 3 | sample_03 | 1840×988 | 1.7x | 0.931 | 0.931 | 0.41 | 3286 | 113.3 | 2.3s |
+| 4 | sample_04 | 902×1316 | 2.0x | 0.720 | 0.976 | 0.15 | 10420 | 324.9 | 2.5s |
+| 5 | sample_05 | 1640×2160 | 1.4x | 0.598 | 0.988 | 0.17 | 1789 | 62.6 | 6.0s |
+| 6 | sample_06 | 1978×2046 | 1.5x | 0.981 | 0.991 | 0.42 | 927 | 34.4 | 5.0s |
+| 7 | sample_07 | 3456×1556 | 1.0x | 0.778 | 0.994 | 0.16 | 1556 | 57.5 | 4.5s |
+| 8 | sample_08 | 1506×790 | 2.0x | 0.972 | 0.972 | 0.36 | 4793 | 156.5 | 2.0s |
+
+### v4 vs off (auto upscale delta)
+
+| Metric | off | v4 auto | Δ |
+|--------|-----|---------|---|
+| IoU mean | 0.822 | **0.849** | +2.7% |
+| IoU aw | 0.981 | 0.981 | — |
+| Chamfer | 0.35 | **0.25** | **−29%** |
+| Nodes | 1787 | 4109 | +2.3× |
+| SVG KB | 55.8 | 119.4 | +2.1× |
+| Time | 2.0s | 3.4s | +1.7× |
+
+**Verdict:** Chamfer −29% (0.35→0.25 px), IoU +2.7%, at 2.3× nodes. Area-weighted IoU flat (0.981).
+v4 auto upscale is the **new default**. `--upscale off` escape hatch available for debugging.
+
+---
+
+## v3 (background as first-class mask class)
 
 | # | Sample | Size | Mode | Inks | IoU mean | IoU aw | IoU worst | IoU bg | Chamfer | Nodes | SVG KB |
 |---|--------|------|------|------|----------|--------|-----------|--------|---------|-------|--------|

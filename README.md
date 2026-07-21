@@ -3,7 +3,7 @@
 Flat logo raster → **RGB vector PDF** tracer.  
 Drop a JPEG/PNG, get a clean PDF ready for print and Illustrator.
 
-**Pipeline:** brand-color detection → palette remap → VTracer spline → PDF
+**Pipeline:** upscale (auto) → brand-color detection → palette remap → VTracer spline → PDF
 
 ---
 
@@ -16,6 +16,9 @@ pip install -r requirements.txt
 
 # CLI
 PYTHONPATH=. python -m src.cli input/logo.jpg -o output/logo.pdf
+
+# CLI with upscale off (escape hatch)
+PYTHONPATH=. LOGOTRACE_UPSCALE=off python -m src.cli input/logo.jpg -o output/logo.pdf
 
 # API
 uvicorn src.api:app --host 127.0.0.1 --port 8095
@@ -30,6 +33,9 @@ curl -s -F file=@logo.jpg -F palette=auto http://127.0.0.1:8095/vectorize -o out
 
 ```
 Raster (JPEG/PNG)
+  │
+  ├─ [src/eval.py]         upscale preprocess (default: auto toward 3072px cap)
+  │   └─ Lanczos resize, effective factor ≤ 2x, skip if < 1.05x
   │
   ├─ [src/colors.py]      palette analysis
   │   ├─ estimate_background()       paper vs fullbleed

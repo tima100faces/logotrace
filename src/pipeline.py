@@ -9,6 +9,7 @@ from src.config import (
     MAX_COLORS,
     MIN_COLORS,
     VTRACER_FILTER_SPECKLE,
+    VTRACER_SEGMENT_LENGTH,
 )
 from src.pdf_export import PdfError, svg_to_pdf_bytes
 from src.postprocess import finalize_svg
@@ -71,6 +72,7 @@ def vectorize_to_svg(
                 svg_tmp,
                 colormode="color",
                 filter_speckle=max(2, VTRACER_FILTER_SPECKLE // 2),
+                segment_length=VTRACER_SEGMENT_LENGTH,
                 color_precision=8,
             )
             svg_text = finalize_svg(svg_tmp, geom=geom)

@@ -160,40 +160,53 @@ def _masks_identical(a: np.ndarray, b: np.ndarray) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Upscale preprocessing
+# Upscale preprocessing — default policy (v4)
 # ---------------------------------------------------------------------------
 
-UPSCALE_VARIANTS = {"off", "2x", "4x", "4x-smooth"}
-MAX_UPSCALE_SIDE = 3072  # cap longest side
-MAX_UPSCALE_PX = 9_500_000  # cap total pixels (VTracer OOM above ~10M)
+UPSCALE_VARIANTS = {"off", "2x", "4x", "4x-smooth", "auto"}
+MAX_UPSCALE_SIDE = 3072
+MAX_UPSCALE_PX = 9_500_000
+MIN_EFFECTIVE_SCALE = 1.05  # skip upscale if would be negligible
+
+
+def _compute_effective_scale(w: int, h: int, requested: float = 2.0) -> float:
+    """Compute upscale factor capped by memory limits.
+
+    effective = min(requested, 3072/max(w,h), sqrt(9.5M/(w*h)))
+    """
+    max_side = max(w, h)
+    total_px = w * h
+    effective = min(
+        requested,
+        MAX_UPSCALE_SIDE / max_side,
+        (MAX_UPSCALE_PX / total_px) ** 0.5 if total_px > 0 else requested,
+    )
+    return effective
 
 
 def _upscale_image(img: Image.Image, variant: str) -> tuple[Image.Image, float] | None:
     """Upscale image for pre-trace experiment.
 
-    Returns (upscaled_img, effective_scale) or None if effective scale < 1.15
-    (too small to matter) or upscaled pixels > MAX_UPSCALE_PX.
-    Effective scale is capped so longest side ≤ MAX_UPSCALE_SIDE.
+    'auto' = apply default policy (up to 2x, capped by limits).
+    Returns (upscaled_img, effective_scale) or None if scale < MIN_EFFECTIVE_SCALE.
     """
     if variant == "off" or variant == "none":
         return img.copy(), 1.0
-    if variant == "2x":
-        requested_scale = 2.0
+    if variant == "auto":
+        requested = 2.0
+    elif variant == "2x":
+        requested = 2.0
     elif variant == "4x" or variant == "4x-smooth":
-        requested_scale = 4.0
+        requested = 4.0
     else:
         raise ValueError(f"unknown upscale variant: {variant}")
 
-    max_side = max(img.width, img.height)
-    effective = min(requested_scale, MAX_UPSCALE_SIDE / max_side)
-    if effective < 1.15:
-        return None  # too little upscale to matter
+    effective = _compute_effective_scale(img.width, img.height, requested)
+    if effective < MIN_EFFECTIVE_SCALE:
+        return None
 
     up_w = int(img.width * effective)
     up_h = int(img.height * effective)
-    if up_w * up_h > MAX_UPSCALE_PX:
-        return None  # would OOM VTracer
-
     up = img.resize((up_w, up_h), Image.Resampling.LANCZOS)
     if variant == "4x-smooth":
         up = up.filter(ImageFilter.GaussianBlur(radius=0.7))
@@ -228,7 +241,7 @@ def evaluate_sample(
     colors: int = DEFAULT_COLORS,
     colors_mode: str = COLORS_MODE_UP_TO,
     geom: str = "off",
-    upscale: str = "off",
+    upscale: str = "auto",
     vtracer_threshold_scale: float = 1.0,
     dump_diffs_dir: Path | str | None = None,
 ) -> dict:
@@ -264,7 +277,7 @@ def evaluate_sample(
                 "nodes": None, "svg_bytes": 0, "render_ok": False,
                 "upscale": upscale, "effective_scale": 1.0,
                 "elapsed": elapsed,
-                "error": "upscale skipped (effective scale < 1.2)",
+                "error": "upscale skipped (effective scale < 1.05)",
             }
         upscaled_img, effective_scale = result
         if effective_scale > 1.0:
@@ -275,10 +288,12 @@ def evaluate_sample(
             pipeline_input = input_path
 
         # 2 ─ Run pipeline → SVG + canonical ink palette
-        # Apply VTracer threshold scaling if requested
+        # Apply VTracer threshold scaling (pixel-unit params only)
         _saved_speckle = _cfg.VTRACER_FILTER_SPECKLE
+        _saved_seglen = _cfg.VTRACER_SEGMENT_LENGTH
         if vtracer_threshold_scale > 1.0:
             _cfg.VTRACER_FILTER_SPECKLE = max(1, int(_cfg.VTRACER_FILTER_SPECKLE * vtracer_threshold_scale))
+            _cfg.VTRACER_SEGMENT_LENGTH = max(1, int(_cfg.VTRACER_SEGMENT_LENGTH * vtracer_threshold_scale))
         try:
             svg_text, inks = vectorize_to_svg(
                 input_path=pipeline_input, colors=colors,
@@ -286,6 +301,7 @@ def evaluate_sample(
             )
         except VectorizeError as exc:
             _cfg.VTRACER_FILTER_SPECKLE = _saved_speckle
+            _cfg.VTRACER_SEGMENT_LENGTH = _saved_seglen
             elapsed = round(time.monotonic() - t0, 1)
             return {
                 "sample": input_path.stem, "file": input_path.name,
@@ -301,6 +317,7 @@ def evaluate_sample(
             }
 
         _cfg.VTRACER_FILTER_SPECKLE = _saved_speckle
+        _cfg.VTRACER_SEGMENT_LENGTH = _saved_seglen
 
         # 3 ─ Scale SVG coords back if upscaled
         if effective_scale > 1.0:
@@ -662,13 +679,10 @@ def run_matrix(
         print("error: no sample_*.jpg files", file=sys.stderr)
         return 1
 
-    # Variants: off, 2x scaled, 4x scaled, 4x-smooth scaled
-    # Each upscale variant passes vtracer_threshold_scale = effective_scale
+    # Variants: off, auto (default policy)
     variants_config = [
         ("off", "off", 1.0),
-        ("2x", "2x", None),       # None = auto (effective_scale from upscale)
-        ("4x", "4x", None),
-        ("4x-smooth", "4x-smooth", None),
+        ("auto", "auto", None),  # None = auto-scale from effective factor
     ]
     all_results: dict[str, list[dict]] = {}
 
@@ -706,79 +720,70 @@ def run_matrix(
     variant_names = [vn for vn, _, _ in variants_config]
     # Build comparison matrix
     lines = [
-        "# Upscale Variant Comparison Matrix (scaled thresholds)",
+        "# Upscale Default Policy (v4): auto vs off",
         "",
-        f"**Samples:** {len(samples)}  **Caps:** side≤{MAX_UPSCALE_SIDE}px, px≤{MAX_UPSCALE_PX//1_000_000}M",
+        f"**Samples:** {len(samples)}  **Policy:** min(2x, 3072/max_side, √(9.5M/total_px))",
         f"**Date:** 2026-07-21",
         "",
         "## IoU mean",
         "",
-        "| Sample | off | 2x | 4x | 4x-smooth | Best |",
-        "|--------|-----|----|----|-----------|------|",
+        "| Sample | off | auto | Δ | Eff. scale |",
+        "|--------|-----|------|---|-----------|",
     ]
     for i, sp in enumerate(samples):
-        vals = {}
-        for v in variant_names:
-            r = all_results[v][i]
-            vals[v] = r["iou_mean"]
-        best = max(v for v in vals.values() if v is not None)
-        best_var = [v for v in variant_names if vals[v] == best][0]
+        r_off = all_results["off"][i]
+        r_auto = all_results["auto"][i]
+        eff = r_auto.get("effective_scale", 1.0)
+        iou_d = r_auto["iou_mean"]
+        iou_o = r_off["iou_mean"]
+        delta = f"+{iou_d - iou_o:.4f}" if (iou_d and iou_o and iou_d >= iou_o) else f"{iou_d - iou_o:.4f}" if (iou_d and iou_o) else "—"
         lines.append(
-            f"| `{sp.stem}` | {_val(vals['off'])} | {_val(vals['2x'])} "
-            f"| {_val(vals['4x'])} | {_val(vals['4x-smooth'])} | **{best_var}** {best:.4f} |"
+            f"| `{sp.stem}` | {_val(iou_o)} | {_val(iou_d)} | {delta} | {eff:.1f}x |"
         )
 
     lines.append("")
     lines.append("## Chamfer (px)")
     lines.append("")
-    lines.append("| Sample | off | 2x | 4x | 4x-smooth | Best |")
-    lines.append("|--------|-----|----|----|-----------|------|")
+    lines.append("| Sample | off | auto | Δ |")
+    lines.append("|--------|-----|------|---|")
     for i, sp in enumerate(samples):
-        vals = {}
-        for v in variant_names:
-            r = all_results[v][i]
-            vals[v] = r["chamfer"]
-        valid = {v: c for v, c in vals.items() if c is not None}
-        if valid:
-            best = min(valid.values())
-            best_var = [v for v, c in valid.items() if c == best][0]
+        r_off = all_results["off"][i]
+        r_auto = all_results["auto"][i]
+        ch_o = r_off["chamfer"]
+        ch_d = r_auto["chamfer"]
+        if ch_o is not None and ch_d is not None:
+            delta = f"{ch_d - ch_o:+.2f}"
         else:
-            best, best_var = None, "—"
+            delta = "—"
         lines.append(
-            f"| `{sp.stem}` | {_val(vals['off'],'.2f')} | {_val(vals['2x'],'.2f')} "
-            f"| {_val(vals['4x'],'.2f')} | {_val(vals['4x-smooth'],'.2f')} | **{best_var}** {_val(best,'.2f')} |"
+            f"| `{sp.stem}` | {_val(ch_o,'.2f')} | {_val(ch_d,'.2f')} | {delta} |"
         )
 
     lines.append("")
     lines.append("## Nodes")
     lines.append("")
-    lines.append("| Sample | off | 2x | 4x | 4x-smooth |")
-    lines.append("|--------|-----|----|----|-----------|")
+    lines.append("| Sample | off | auto |")
+    lines.append("|--------|-----|------|")
     for i, sp in enumerate(samples):
-        vals = {v: all_results[v][i]["nodes"] for v in variant_names}
-        lines.append(
-            f"| `{sp.stem}` | {vals['off']} | {vals['2x']} "
-            f"| {vals['4x']} | {vals['4x-smooth']} |"
-        )
+        no = all_results["off"][i]["nodes"]
+        nd = all_results["auto"][i]["nodes"]
+        lines.append(f"| `{sp.stem}` | {no} | {nd} |")
 
     lines.append("")
     lines.append("## Time (s)")
     lines.append("")
-    lines.append("| Sample | off | 2x | 4x | 4x-smooth |")
-    lines.append("|--------|-----|----|----|-----------|")
+    lines.append("| Sample | off | auto |")
+    lines.append("|--------|-----|------|")
     for i, sp in enumerate(samples):
-        vals = {v: all_results[v][i].get("elapsed", 0) for v in variant_names}
-        lines.append(
-            f"| `{sp.stem}` | {vals['off']} | {vals['2x']} "
-            f"| {vals['4x']} | {vals['4x-smooth']} |"
-        )
+        to = all_results["off"][i].get("elapsed", 0)
+        td = all_results["auto"][i].get("elapsed", 0)
+        lines.append(f"| `{sp.stem}` | {to} | {td} |")
 
-    # Aggregate row
     lines.append("")
     lines.append("## Aggregate (mean across samples)")
     lines.append("")
-    lines.append("| Metric | off | 2x | 4x | 4x-smooth |")
-    lines.append("|--------|-----|----|----|-----------|")
+    lines.append("| Metric | off | auto |")
+    lines.append("|--------|-----|------|")
     for metric, key, fmt in [
         ("IoU mean", "iou_mean", ".4f"),
         ("IoU aw", "iou_aw", ".4f"),
@@ -816,7 +821,7 @@ def run_eval(
     colors: int = DEFAULT_COLORS,
     colors_mode: str = COLORS_MODE_UP_TO,
     geom: str = "off",
-    upscale: str = "off",
+    upscale: str = "auto",
     dump_diffs: bool = False,
 ) -> int:
     in_dir = Path(input_dir)
