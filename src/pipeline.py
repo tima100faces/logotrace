@@ -89,6 +89,7 @@ def vectorize_to_svg(
     filename_hint: str = "upload.bin",
     geom: str = "off",
     upscale: bool = True,
+    engine: str = "vtracer",
 ) -> tuple[str, list[tuple[int, int, int]], float]:
     """Core: raster → SVG string + extracted palette + effective upscale factor.
 
@@ -97,6 +98,8 @@ def vectorize_to_svg(
     """
     colors = _check_colors(colors)
     colors_mode = _check_colors_mode(colors_mode)
+    if engine not in ("vtracer", "subpixel"):
+        raise VectorizeError("engine must be 'vtracer' or 'subpixel'")
     if input_path is None and data is None:
         raise VectorizeError("input_path or data required")
 
@@ -139,6 +142,20 @@ def vectorize_to_svg(
                 source, colors, prepared, colors_mode=colors_mode
             )
 
+            if engine == "subpixel":
+                # Subpixel contour tracer: works from original image + palette
+                from src.tracer_subpixel import subpixel_trace
+
+                bg = None
+                if "paper" in (_mode or ""):
+                    from src.colors import estimate_background
+                    bg = estimate_background(src_img)
+                svg_raw = subpixel_trace(src_img, list(palette), bg_color=bg)
+                subpixel_svg = tmpdir / "subpixel.svg"
+                subpixel_svg.write_text(svg_raw, encoding="utf-8")
+                svg_text = finalize_svg(subpixel_svg, geom=geom)
+                return svg_text, palette, eff
+
             # 2 ─ VTracer (scale pixel-unit thresholds)
             if eff > UPSCALE_MIN_EFFECTIVE:
                 speckle = max(1, int(max(2, VTRACER_FILTER_SPECKLE // 2) * eff))
@@ -175,6 +192,7 @@ def vectorize_file(
     fmt: str = "pdf",
     geom: str = "off",
     upscale: bool = True,
+    engine: str = "vtracer",
 ) -> Path:
     """Vectorize image file → PDF (default) or SVG."""
     fmt = fmt.lower().strip()
@@ -188,6 +206,7 @@ def vectorize_file(
         colors_mode=colors_mode,
         geom=geom,
         upscale=upscale,
+        engine=engine,
     )
 
     if output_path is None:
@@ -220,6 +239,7 @@ def vectorize_bytes(
     fmt: str = "pdf",
     geom: str = "off",
     upscale: bool = True,
+    engine: str = "vtracer",
     debug_save: bool = True,
 ) -> tuple[bytes, float]:
     """Vectorize raw bytes → (PDF or SVG bytes, effective upscale factor).
@@ -239,6 +259,7 @@ def vectorize_bytes(
         filename_hint=filename_hint,
         geom=geom,
         upscale=upscale,
+        engine=engine,
     )
     if fmt == "svg":
         payload = svg_text.encode("utf-8")

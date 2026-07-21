@@ -47,6 +47,12 @@ def main(
         "--upscale/--no-upscale",
         help="Auto upscale before trace (default: on, v4 policy; --no-upscale for off)",
     ),
+    engine: str = typer.Option(
+        "vtracer",
+        "--engine",
+        "-e",
+        help="Trace engine: vtracer (default) | subpixel (experimental)",
+    ),
 ) -> None:
     """Convert a flat logo image to RGB vector PDF (SVG optional)."""
     fmt_l = fmt.lower().strip()
@@ -61,6 +67,10 @@ def main(
     if gl not in (GEOM_OFF, GEOM_BASIC, GEOM_STRICT):
         typer.secho("error: --geom must be off|basic|strict", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
+    eng = engine.lower().strip()
+    if eng not in ("vtracer", "subpixel"):
+        typer.secho("error: --engine must be vtracer|subpixel", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
 
     out = output
     if out is None:
@@ -74,6 +84,7 @@ def main(
             fmt=fmt_l,
             geom=gl,
             upscale=upscale,
+            engine=eng,
         )
     except VectorizeError as exc:
         typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)

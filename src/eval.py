@@ -241,6 +241,7 @@ def evaluate_sample(
     geom: str = "off",
     upscale: str = "auto",
     vtracer_threshold_scale: float = 1.0,
+    engine: str = "vtracer",
     dump_diffs_dir: Path | str | None = None,
 ) -> dict:
     """Run pipeline on a sample and return a dict of metrics.
@@ -288,6 +289,7 @@ def evaluate_sample(
                 input_path=pipeline_input, colors=colors,
                 colors_mode=colors_mode, geom=geom,
                 upscale=pipe_upscale,
+                engine=engine,
             )
             # If pipeline handled upscale, use its effective_scale
             if pipe_upscale:
@@ -464,6 +466,7 @@ def evaluate_sample(
             "degenerate": degenerate,
             "upscale": upscale,
             "effective_scale": effective_scale,
+            "engine": engine,
             "elapsed": elapsed,
             "per_mask": per_mask,
         }
@@ -672,14 +675,15 @@ def run_matrix(
         print("error: no sample_*.jpg files", file=sys.stderr)
         return 1
 
-    # Variants: off, auto (default policy)
+    # Variants: a) vtracer+upscale, b) subpixel no upscale, c) subpixel+upscale
     variants_config = [
-        ("off", "off", 1.0),
-        ("auto", "auto", None),  # None = auto-scale from effective factor
+        ("vtracer+upscale", "auto", 1.0, "vtracer"),
+        ("subpixel", "off", 1.0, "subpixel"),
+        ("subpix+upscale", "auto", 1.0, "subpixel"),
     ]
     all_results: dict[str, list[dict]] = {}
 
-    for var_name, upscale_val, thresh_override in variants_config:
+    for var_name, upscale_val, thresh_override, eng_val in variants_config:
         print(f"\n{'='*60}")
         print(f"VARIANT: {var_name}")
         print(f"{'='*60}")
@@ -699,6 +703,7 @@ def run_matrix(
                 sp, colors=colors, colors_mode=colors_mode, geom=geom,
                 upscale=upscale_val,
                 vtracer_threshold_scale=thresh,
+                engine=eng_val,
             )
             results.append(r)
             eff_str = f" eff={r.get('effective_scale',1.0):.1f}x" if r.get('effective_scale',1.0) > 1.0 else ""
@@ -707,73 +712,73 @@ def run_matrix(
         out_path = Path(output_dir) / f"eval_{var_name.replace('-', '_')}.md"
         generate_report(results, out_path, version=f"v3-{var_name}")
 
-    variant_names = [vn for vn, _, _ in variants_config]
     # Build comparison matrix
+    vnames = [vn for vn, _, _, _ in variants_config]
+    def _vr(var: str, si: int, key: str, fmt_str: str = ".4f") -> str:
+        v = all_results[var][si].get(key)
+        if v is None:
+            return "—"
+        return f"{v:{fmt_str}}"
+
     lines = [
-        "# Upscale Default Policy (v4): auto vs off",
+        "# Engine Comparison: VTracer vs Subpixel (Stage 3)",
         "",
-        f"**Samples:** {len(samples)}  **Policy:** min(2x, 3072/max_side, √(9.5M/total_px))",
+        f"**Samples:** {len(samples)}",
         f"**Date:** 2026-07-21",
         "",
-        "## IoU mean",
+        "## IoU aw",
         "",
-        "| Sample | off | auto | Δ | Eff. scale |",
-        "|--------|-----|------|---|-----------|",
+        "| Sample | vtracer+upscale | subpixel | subpix+upscale |",
+        "|--------|----------------|----------|---------------|",
     ]
     for i, sp in enumerate(samples):
-        r_off = all_results["off"][i]
-        r_auto = all_results["auto"][i]
-        eff = r_auto.get("effective_scale", 1.0)
-        iou_d = r_auto["iou_mean"]
-        iou_o = r_off["iou_mean"]
-        delta = f"+{iou_d - iou_o:.4f}" if (iou_d and iou_o and iou_d >= iou_o) else f"{iou_d - iou_o:.4f}" if (iou_d and iou_o) else "—"
         lines.append(
-            f"| `{sp.stem}` | {_val(iou_o)} | {_val(iou_d)} | {delta} | {eff:.1f}x |"
+            f"| `{sp.stem}` | {_vr('vtracer+upscale',i,'iou_aw')} "
+            f"| {_vr('subpixel',i,'iou_aw')} "
+            f"| {_vr('subpix+upscale',i,'iou_aw')} |"
         )
 
     lines.append("")
     lines.append("## Chamfer (px)")
     lines.append("")
-    lines.append("| Sample | off | auto | Δ |")
-    lines.append("|--------|-----|------|---|")
+    lines.append("| Sample | vtracer+upscale | subpixel | subpix+upscale |")
+    lines.append("|--------|----------------|----------|---------------|")
     for i, sp in enumerate(samples):
-        r_off = all_results["off"][i]
-        r_auto = all_results["auto"][i]
-        ch_o = r_off["chamfer"]
-        ch_d = r_auto["chamfer"]
-        if ch_o is not None and ch_d is not None:
-            delta = f"{ch_d - ch_o:+.2f}"
-        else:
-            delta = "—"
         lines.append(
-            f"| `{sp.stem}` | {_val(ch_o,'.2f')} | {_val(ch_d,'.2f')} | {delta} |"
+            f"| `{sp.stem}` | {_vr('vtracer+upscale',i,'chamfer','.2f')} "
+            f"| {_vr('subpixel',i,'chamfer','.2f')} "
+            f"| {_vr('subpix+upscale',i,'chamfer','.2f')} |"
         )
 
     lines.append("")
     lines.append("## Nodes")
     lines.append("")
-    lines.append("| Sample | off | auto |")
-    lines.append("|--------|-----|------|")
+    lines.append("| Sample | vtracer+upscale | subpixel | subpix+upscale |")
+    lines.append("|--------|----------------|----------|---------------|")
     for i, sp in enumerate(samples):
-        no = all_results["off"][i]["nodes"]
-        nd = all_results["auto"][i]["nodes"]
-        lines.append(f"| `{sp.stem}` | {no} | {nd} |")
+        lines.append(
+            f"| `{sp.stem}` | {_vr('vtracer+upscale',i,'nodes','.0f')} "
+            f"| {_vr('subpixel',i,'nodes','.0f')} "
+            f"| {_vr('subpix+upscale',i,'nodes','.0f')} |"
+        )
 
     lines.append("")
     lines.append("## Time (s)")
     lines.append("")
-    lines.append("| Sample | off | auto |")
-    lines.append("|--------|-----|------|")
+    lines.append("| Sample | vtracer+upscale | subpixel | subpix+upscale |")
+    lines.append("|--------|----------------|----------|---------------|")
     for i, sp in enumerate(samples):
-        to = all_results["off"][i].get("elapsed", 0)
-        td = all_results["auto"][i].get("elapsed", 0)
-        lines.append(f"| `{sp.stem}` | {to} | {td} |")
+        lines.append(
+            f"| `{sp.stem}` | {_vr('vtracer+upscale',i,'elapsed','.1f')} "
+            f"| {_vr('subpixel',i,'elapsed','.1f')} "
+            f"| {_vr('subpix+upscale',i,'elapsed','.1f')} |"
+        )
 
     lines.append("")
     lines.append("## Aggregate (mean across samples)")
     lines.append("")
-    lines.append("| Metric | off | auto |")
-    lines.append("|--------|-----|------|")
+    lines.append("| Metric | vtracer+upscale | subpixel | subpix+upscale |")
+    lines.append("|--------|----------------|----------|---------------|")
     for metric, key, fmt in [
         ("IoU mean", "iou_mean", ".4f"),
         ("IoU aw", "iou_aw", ".4f"),
@@ -783,7 +788,7 @@ def run_matrix(
         ("Time (s)", "elapsed", ".1f"),
     ]:
         row = f"| {metric} |"
-        for v in variant_names:
+        for v in vnames:
             vals = [r[key] for r in all_results[v] if r.get(key) is not None]
             if not vals:
                 row += " — |"

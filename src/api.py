@@ -48,6 +48,7 @@ async def vectorize(
     colors_mode: str = Form(COLORS_MODE_AUTO),
     format: str = Form("pdf"),
     geom: str = Form(GEOM_OFF),
+    engine: str = Form("vtracer"),
 ) -> Response:
     fmt = format.lower().strip()
     if fmt not in ("pdf", "svg"):
@@ -55,6 +56,9 @@ async def vectorize(
     gl = geom.lower().strip()
     if gl not in (GEOM_OFF, GEOM_BASIC, GEOM_STRICT):
         raise HTTPException(status_code=400, detail="geom must be off|basic|strict")
+    eng = engine.lower().strip()
+    if eng not in ("vtracer", "subpixel"):
+        raise HTTPException(status_code=400, detail="engine must be vtracer|subpixel")
 
     raw = colors if (colors is not None and str(colors).strip() != "") else palette
     try:
@@ -81,6 +85,7 @@ async def vectorize(
             filename_hint=name,
             fmt=fmt,
             geom=gl,
+            engine=eng,
         )
         payload, eff = payload  # unpack (bytes, float)
     except VectorizeError as exc:
@@ -90,6 +95,7 @@ async def vectorize(
         "X-LogoTrace-Colors": str(n),
         "X-LogoTrace-Colors-Mode": cm,
         "X-LogoTrace-Upscale": str(round(eff, 2)),
+        "X-LogoTrace-Engine": eng,
     }
     if fmt == "pdf":
         headers["Content-Disposition"] = 'attachment; filename="logotrace.pdf"'
