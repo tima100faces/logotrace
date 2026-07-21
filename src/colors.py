@@ -21,10 +21,62 @@ MIN_ABSOLUTE_COUNT = 8
 
 COLORS_MODE_UP_TO = "up_to"
 COLORS_MODE_EXACT = "exact"
+COLORS_MODE_AUTO = "auto"
 
 # Gradient collapse: low-saturation chain → one ink; same-hue L-ramp → one anchor
 GRAY_SAT_MAX = 0.14
 HUE_BUCKET_DEG = 28.0
+
+
+def resolve_palette_policy(
+    *,
+    colors: int | str | None = None,
+    colors_mode: str | None = None,
+    default_colors: int = 4,
+) -> tuple[int, str]:
+    """
+    UI/API contract:
+      - palette/colors = auto|None  → (default_colors, up_to)  # smart default + crush
+      - palette/colors = K (int) + mode auto/omitted → (K, exact)  # manual override
+      - colors_mode up_to|exact explicit → honor with colors N
+
+    Returns (n, mode) where mode is up_to|exact.
+    """
+    from src.config import MAX_COLORS, MIN_COLORS  # local to avoid cycles at import? config has no colors import
+
+    mode_raw = (colors_mode if colors_mode is not None else COLORS_MODE_AUTO)
+    mode_s = str(mode_raw).lower().strip()
+
+    # parse colors
+    if colors is None or (isinstance(colors, str) and colors.lower().strip() in ("", "auto")):
+        n: int | None = None
+    elif isinstance(colors, str):
+        cs = colors.lower().strip()
+        if cs == "auto":
+            n = None
+        else:
+            try:
+                n = int(cs)
+            except ValueError as exc:
+                raise ValueError(f"colors must be auto or int {MIN_COLORS}..{MAX_COLORS}") from exc
+    else:
+        n = int(colors)
+
+    if n is None:
+        # fully auto
+        return int(default_colors), COLORS_MODE_UP_TO
+
+    if n < MIN_COLORS or n > MAX_COLORS:
+        raise ValueError(f"colors must be {MIN_COLORS}..{MAX_COLORS}, got {n}")
+
+    if mode_s in ("", COLORS_MODE_AUTO, "default"):
+        # explicit N without advanced mode → manual exact
+        return n, COLORS_MODE_EXACT
+    if mode_s == COLORS_MODE_UP_TO:
+        return n, COLORS_MODE_UP_TO
+    if mode_s == COLORS_MODE_EXACT:
+        return n, COLORS_MODE_EXACT
+    raise ValueError("colors_mode must be auto|up_to|exact")
 
 
 def _dist2(a: tuple[int, int, int], b: tuple[int, int, int]) -> int:
@@ -284,8 +336,16 @@ def _select_from_pixels(
     max_colors: int,
     colors_mode: str = COLORS_MODE_UP_TO,
 ) -> list[tuple[int, int, int]]:
-    """Mass-aware palette + gradient ramp collapse."""
+    """
+    Mass-aware palette from ink pixels.
+
+    up_to (auto): wide candidates → gradient crush → ≤ max_colors
+    exact (manual K): top-K by mass, NO gradient crush — dual gray etc. survive
+    """
     clusters = _build_clusters(ink)
+    if colors_mode == COLORS_MODE_EXACT:
+        return _mass_aware_select(clusters, max_colors, colors_mode=COLORS_MODE_EXACT)
+
     wide_n = max(max_colors * 4, max_colors + 2)
     wide = _mass_aware_select(clusters, wide_n, colors_mode=COLORS_MODE_UP_TO)
     collapsed = collapse_gradient_ramps(wide, max_colors=max_colors)

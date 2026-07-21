@@ -21,14 +21,18 @@ Also uses `rsvg-convert` (librsvg2-bin) for SVG→PDF when available.
 ```bash
 source .venv/bin/activate
 PYTHONPATH=/root/logotrace python -m src.cli samples/sample_06.jpg -o output/sample_06.pdf
-PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.pdf --colors 4 --colors-mode up_to --geom basic
-PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.pdf -c 2 --colors-mode exact -g strict
+# auto (default): up_to 4 + gradient crush
+PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.pdf -c 4 --colors-mode up_to
+# manual exact K (UI slider): no crush — dual gray survives (sample_05)
+PYTHONPATH=/root/logotrace python -m src.cli samples/sample_05.jpg -o out.pdf -c 2 --colors-mode exact
 # debug SVG:
 PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.svg --format svg
 ```
 
 - `--colors N` — palette size (default **4**)
-- `--colors-mode up_to|exact` — at most N vs collapse to N by mass
+- `--colors-mode up_to|exact`
+  - **up_to** = auto smart (≤N, may crush gray ramps)
+  - **exact** = manual K solids by mass (no crush)
 - `--geom off|basic|strict` — path normalize (**default off**; basic/strict experimental)
 - JPEG first-class. Transparent PNG alpha preserved when present.
 
@@ -38,9 +42,20 @@ PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.svg --format svg
 PYTHONPATH=/root/logotrace uvicorn src.api:app --host 127.0.0.1 --port 8095
 
 curl -s http://127.0.0.1:8095/health
-curl -s -F "file=@logo.jpg" -F "colors=4" -F "format=pdf" \
+# UI contract:
+curl -s -F "file=@logo.jpg" -F "palette=auto" -F "format=pdf" \
   http://127.0.0.1:8095/vectorize -o out.pdf
+curl -s -F "file=@logo.jpg" -F "palette=2" -F "format=pdf" \
+  http://127.0.0.1:8095/vectorize -o out.pdf
+# Response headers: X-LogoTrace-Colors, X-LogoTrace-Colors-Mode
 ```
+
+| `palette` | Meaning |
+|-----------|---------|
+| `auto` | up_to DEFAULT_COLORS(4) + crush |
+| `1`..`16` | **exact** N (manual override) |
+
+Legacy: `colors` + `colors_mode=up_to|exact|auto`.
 
 Default format: **pdf**.
 

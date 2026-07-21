@@ -6,6 +6,7 @@ from PIL import Image
 from src.api import app
 
 FIXTURES = Path(__file__).parent / "fixtures"
+SAMPLES = Path(__file__).resolve().parents[1] / "samples"
 
 
 def _ensure_fixture() -> Path:
@@ -34,8 +35,23 @@ def test_vectorize_endpoint_pdf():
         r = client.post(
             "/vectorize",
             files={"file": ("tiny.png", f, "image/png")},
-            data={"colors": "2", "format": "pdf"},
+            data={"palette": "2", "format": "pdf"},
         )
     assert r.status_code == 200, r.text
     assert "pdf" in r.headers.get("content-type", "").lower()
     assert r.content.startswith(b"%PDF")
+    assert r.headers.get("X-LogoTrace-Colors") == "2"
+    assert r.headers.get("X-LogoTrace-Colors-Mode") == "exact"
+
+
+def test_vectorize_palette_auto_header():
+    path = _ensure_fixture()
+    client = TestClient(app)
+    with path.open("rb") as f:
+        r = client.post(
+            "/vectorize",
+            files={"file": ("tiny.png", f, "image/png")},
+            data={"palette": "auto", "format": "pdf"},
+        )
+    assert r.status_code == 200, r.text
+    assert r.headers.get("X-LogoTrace-Colors-Mode") == "up_to"

@@ -102,6 +102,31 @@ def test_gradient_grays_collapse_to_one_ink():
     assert any(c[0] > 150 for c in out)  # red kept
 
 
+def test_resolve_palette_policy_auto_and_manual():
+    from src.colors import resolve_palette_policy
+
+    n, m = resolve_palette_policy(colors="auto", colors_mode="auto")
+    assert (n, m) == (4, COLORS_MODE_UP_TO)
+    n, m = resolve_palette_policy(colors=2, colors_mode="auto")
+    assert (n, m) == (2, COLORS_MODE_EXACT)
+    n, m = resolve_palette_policy(colors=4, colors_mode=COLORS_MODE_UP_TO)
+    assert (n, m) == (4, COLORS_MODE_UP_TO)
+
+
+def test_sample_05_exact_two_keeps_dual_gray():
+    """Manual exact 2 must keep black + mid-gray (no gradient crush)."""
+    src = SAMPLES / "sample_05.jpg"
+    if not src.is_file():
+        pytest.skip("sample_05 missing")
+    auto = analyze_palette(Image.open(src), 4, colors_mode=COLORS_MODE_UP_TO).colors
+    exact = analyze_palette(Image.open(src), 2, colors_mode=COLORS_MODE_EXACT).colors
+    assert len(auto) == 1  # crush → mono black
+    assert len(exact) >= 2
+    lights = sorted(sum(c) / 3 for c in exact)
+    assert lights[0] < 80  # dark
+    assert lights[1] > 60  # mid gray distinct
+
+
 def test_remap_keeps_palette(tiny_logo: Path):
     img = Image.open(tiny_logo)
     pal = extract_logo_colors(img, 2)

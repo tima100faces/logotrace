@@ -24,11 +24,18 @@ python -m src.cli IN.jpg -o OUT.pdf -c 4 --colors-mode up_to -g basic
 python -m src.cli IN.jpg -o OUT.pdf -c 2 --colors-mode exact -g strict
 ```
 
+## Round 5 — auto vs exact palette contract (`v0.4`)
+
+- **auto / up_to:** gradient crush OK (sample_08 banding)
+- **exact / manual K:** no crush — sample_05 exact 2 → black + mid-gray
+- API: `palette=auto|N` + headers `X-LogoTrace-Colors*`
+- pytest: 19 passed
+
 ## Round 4 (gradient crush + edge smooth) — `b12ad0a`
 
 - Gray/same-hue ramps → one solid ink; distinct hues kept
 - sample_08: single ink fill (no gray band stack in SVG)
-- Light morph smooth per label before trace
+- Light morph smooth per label before trace — **later removed** (staircases)
 - geom remains **off** by default
 - Agent verified all 8 PDFs non-blank
 

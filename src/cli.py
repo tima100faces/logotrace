@@ -23,12 +23,12 @@ def main(
         "-c",
         min=MIN_COLORS,
         max=MAX_COLORS,
-        help="Ink palette size N (see --colors-mode)",
+        help="Ink palette size N (with --colors-mode)",
     ),
     colors_mode: str = typer.Option(
         COLORS_MODE_UP_TO,
         "--colors-mode",
-        help="up_to (default): at most N majors; exact: collapse to N by mass",
+        help="up_to=auto smart (default, may crush gradients); exact=manual K solids",
     ),
     fmt: str = typer.Option(
         "pdf",
