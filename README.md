@@ -1,85 +1,146 @@
 # LogoTrace
 
-Flat logo tracer for **JPEG/PNG** → **RGB vector PDF** (SVG optional debug).
+Flat logo raster → **RGB vector PDF** tracer.  
+Drop a JPEG/PNG, get a clean PDF ready for print and Illustrator.
 
-Pipeline: measure brand colors → remap → VTracer → PDF.
+**Pipeline:** brand-color detection → palette remap → VTracer spline → PDF
 
-## Setup
+---
+
+## Quick start
 
 ```bash
 cd /root/logotrace
-python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-./bin/vtracer --version   # bundled linux x86_64
+
+# CLI
+PYTHONPATH=. python -m src.cli input/logo.jpg -o output/logo.pdf
+
+# API
+uvicorn src.api:app --host 127.0.0.1 --port 8095
+curl -s -F file=@logo.jpg -F palette=auto http://127.0.0.1:8095/vectorize -o out.pdf
 ```
 
-Also uses `rsvg-convert` (librsvg2-bin) for SVG→PDF when available.
+**Web UI:** https://idealabs.co/trace/ — paste/drop, Auto|1–4 colors, canvas preview + zoom/pan.
 
-## CLI
+---
+
+## Architecture
+
+```
+Raster (JPEG/PNG)
+  │
+  ├─ [src/colors.py]      palette analysis
+  │   ├─ estimate_background()       paper vs fullbleed
+  │   ├─ _mass_aware_select()        dust → nearest major
+  │   ├─ collapse_gradient_ramps()   gray ramp → one ink
+  │   └─ bimodal guard               undo crush if two mass peaks
+  │
+  ├─ [src/preprocess.py]   brand-color remap
+  │   └─ remap_to_palette()   snap pixels to measured colors
+  │
+  ├─ [src/tracer_vtracer.py]  subprocess → VTracer 0.6.4
+  │   └─ spline mode, color, mild speckle
+  │
+  ├─ [src/postprocess.py]  svgo optimize
+  │
+  ├─ [src/geometry.py]     path simplify (off by default)
+  │
+  ├─ [src/pdf_export.py]   SVG → PDF (rsvg-convert / cairosvg)
+  │
+  ├─ [src/verify.py]       self-check: raster output, assert non-blank
+  │
+  ├─ [src/pipeline.py]     orchestrator: vectorize_file / vectorize_bytes
+  │
+  ├─ [src/debug_save.py]   persist input/ui_* + output/ui_* + last.*
+  │                        cap 500 runs, no time purge
+  │
+  ├─ [src/api.py]          FastAPI: POST /vectorize, GET /health, static UI
+  ├─ [src/cli.py]          Typer: --colors, --colors-mode, --geom, --format
+  └─ [src/config.py]       VTracer binary path, thresholds
+```
+
+### Palette = Auto / Manual K
+
+| `palette` | Internal mode | Gradient crush |
+|-----------|---------------|----------------|
+| `auto`    | up_to ≤ 4     | yes (bimodal guard overrides) |
+| `1`–`16`  | exact K       | **no** — exact N inks by mass |
+
+Response headers: `X-LogoTrace-Colors`, `X-LogoTrace-Colors-Mode`.
+
+### Colors: gradient crush + bimodal guard
+
+Gray/same-hue lightness ramps collapse to one solid ink (sample_08 banding → solid circle).  
+**Bimodal guard:** if crush produces 1 fill but histogram shows two mass peaks >10% separated by ≥60 lightness units → auto-correct to mass-aware palette without crush. Prevents dark-background logos with light text from becoming solid rectangles.
+
+### Geometry post-pass
+
+`--geom off` (default) keeps raw VTracer splines. `basic`/`strict` are experimental and may facet curves — use only for testing.
+
+---
+
+## Project structure
+
+```
+logotrace/
+  bin/vtracer                  # bundled 0.6.4 Linux x86_64
+  src/
+    api.py, cli.py, config.py
+    colors.py                  # palette, crush, bimodal guard
+    preprocess.py, tracer_vtracer.py, pipeline.py
+    pdf_export.py, postprocess.py, geometry.py
+    verify.py, debug_save.py, disks.py
+  static/                      # Web UI (html/css/js + pdf.js)
+  tests/                       # pytest (20 passed)
+  docs/                        # SPEC, DECISIONS, QA-NOTES, ai-preflight-vision-qa
+  deploy/                      # nginx snippet for idealabs.co/trace
+  input/                       # sample_*.jpg + ui_* debug dumps
+  output/                      # gitignored PDFs/SVGs
+```
+
+---
+
+## CLI reference
 
 ```bash
-source .venv/bin/activate
-PYTHONPATH=/root/logotrace python -m src.cli input/sample_06.jpg -o output/sample_06.pdf
-# auto (default): up_to 4 + gradient crush
-PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.pdf -c 4 --colors-mode up_to
-# manual exact K (UI slider): no crush — dual gray survives (sample_05)
-PYTHONPATH=/root/logotrace python -m src.cli input/sample_05.jpg -o out.pdf -c 2 --colors-mode exact
-# debug SVG:
-PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.svg --format svg
+# auto (default): up_to 4 + gradient crush (bimodal guard)
+python -m src.cli input.jpg -o out.pdf
+
+# manual exact K: no crush — dual gray survives
+python -m src.cli input/sample_05.jpg -o out.pdf -c 2 --colors-mode exact
+
+# debug SVG path geometry
+python -m src.cli input.jpg -o out.svg --format svg
 ```
 
-- `--colors N` — palette size (default **4**)
-- `--colors-mode up_to|exact`
-  - **up_to** = auto smart (≤N, may crush gray ramps)
-  - **exact** = manual K solids by mass (no crush)
-- `--geom off|basic|strict` — path normalize (**default off**; basic/strict experimental)
-- JPEG first-class. Transparent PNG alpha preserved when present.
+---
 
-## API + UI (localhost)
+## API
 
-```bash
-PYTHONPATH=/root/logotrace uvicorn src.api:app --host 127.0.0.1 --port 8095
+```
+POST /vectorize
+  file=@logo.jpg    (multipart, required)
+  palette=auto|1-4  (default auto)
+  format=pdf|svg    (default pdf)
 
-# UI
-open http://127.0.0.1:8095/
-
-curl -s http://127.0.0.1:8095/health
-# UI contract:
-curl -s -F "file=@logo.jpg" -F "palette=auto" -F "format=pdf" \
-  http://127.0.0.1:8095/vectorize -o out.pdf
-curl -s -F "file=@logo.jpg" -F "palette=2" -F "format=pdf" \
-  http://127.0.0.1:8095/vectorize -o out.pdf
-# Response headers: X-LogoTrace-Colors, X-LogoTrace-Colors-Mode
+GET  /health
+GET  /              (Web UI)
 ```
 
-Web UI (English, light): drop / click / **paste** · Colors Auto|1–4 · canvas preview + zoom/pan · PDF download.
+---
 
-Debug dumps (API): `input/ui_*` + `output/ui_*` + `last.*` (on by default; `LOGOTRACE_DEBUG_SAVE=0` to disable). Soft cap 500 runs, no time purge.
+## Documentation
 
-| `palette` | Meaning |
-|-----------|---------|
-| `auto` | up_to DEFAULT_COLORS(4) + crush |
-| `1`..`16` | **exact** N (manual override) |
+- [`docs/SPEC.md`](docs/SPEC.md) — product spec, user stories, success criteria
+- [`docs/DECISIONS.md`](docs/DECISIONS.md) — architecture decision records (ADR-1…16)
+- [`docs/QA-NOTES.md`](docs/QA-NOTES.md) — manual QA rounds, sample results
+- [`docs/RESEARCH.md`](docs/RESEARCH.md) — tracer selection research
+- [`docs/ai-preflight-vision-qa.md`](docs/ai-preflight-vision-qa.md) — AI vision QA proposal
 
-Legacy: `colors` + `colors_mode=up_to|exact|auto`.
-
-Default format: **pdf**.
-
-## Tests
-
-```bash
-PYTHONPATH=/root/logotrace pytest -q
-```
-
-## Docs
-
-- `docs/SPEC.md` — product spec
-- `docs/RESEARCH.md` — research
-- `docs/DECISIONS.md` — ADRs
-- `docs/QA-NOTES.md` — sample results
-- `docs/plans/2026-07-21-mvp-implementation.md` — original plan
+---
 
 ## License
 
-GPL-3.0-or-later. See `LICENSE`, `NOTICE`.
+GPL-3.0-or-later. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
