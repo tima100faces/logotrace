@@ -1,44 +1,35 @@
-# Manual QA — real samples (2026-07-21)
+# Manual QA — round 2 (2026-07-21)
 
-Engine: VTracer 0.6.4 via LogoTrace pipeline (`--colors 4`, default flags).
-Command: `python -m src.cli samples/X.jpg -o output/X.svg -c 4`
+## Changes since round 1
 
-| File | Size in | SVG out | Notes |
-|------|---------|---------|--------|
-| sample_01.jpg | 190 KB / 1340x1276 | ~121 KB | Traced OK |
-| sample_02.jpg | 57 KB / 904x946 | ~27 KB | Traced OK |
-| sample_03.jpg | 136 KB / 1840x988 | ~98 KB | Traced OK |
-| sample_04.jpg | 121 KB / 902x1316 | ~100 KB | Traced OK |
-| sample_05.jpg | 133 KB / 1640x2160 | ~66 KB | Traced OK |
-| sample_06.jpg | 117 KB / 1978x2046 | ~27 KB | Traced OK |
-| sample_07.jpg | 212 KB / 3456x1556 | ~90 KB | Traced OK |
-| sample_08.jpg | 97 KB / 1506x790 | ~141 KB | Traced OK |
+1. **JPEG-first color pipeline**
+   - Extract dominant brand colors from original
+   - Remap pixels to those colors before VTracer
+   - Modes: `paper` (logo on light scan) vs `fullbleed` (brand field fills frame)
+2. **Default deliverable = RGB PDF** (SVG kept for debug via `--format svg`)
+3. Lower VTracer speckle filter so thin second strokes survive
+
+## Problem cases (user feedback)
+
+| File | Before | After (engine) | Notes |
+|------|--------|----------------|-------|
+| sample_02 | hue shift, green washed | paper mode; ink ≈ `#2c673d` (closer to original dark green) | Still effectively 1 brand green + paper |
+| sample_06 | 2 colors → 1 | paper; **red + black** kept | Fixed |
+| sample_07 | 2 colors → 1 | fullbleed; **navy field + orange** | Fixed (blue is brand field, not paper) |
+| sample_08 | hue/gray soup | paper; dark grays dominant | Better blacks; VTracer still splits gray steps — optional later mono path |
+
+## Outputs
+
+- PDF: `/root/logotrace/output/sample_0X.pdf`
+- SVG debug: `/root/logotrace/output/sample_0X.svg`
 
 ## Automated
 
-- `pytest -q` → **13 passed**
-- `GET /health` → 200 `{"status":"ok"}`
-- `POST /vectorize` on sample_02 → SVG
+- `pytest -q` → 12 passed
+- API default `format=pdf` → `%PDF`
 
-## Visual / geometry (operator)
+## Still open / next knobs
 
-Samples are **JPEG photos/scans of logos** (not clean transparent PNG masters). Expect:
-
-- Background paper/noise may become extra shapes
-- JPEG compression edges add path complexity
-- True alpha not present in these inputs (JPEG)
-
-**Recommendation for next QA round:** if possible, also drop clean PNG masters with transparent background for fairer geometry check.
-
-## Pass bar for MVP engineering
-
-- Pipeline stable on all 8 files: **YES**
-- Editable flat SVG produced: **YES** (paths + fills)
-- Product-quality vs Vectorizer.AI: **not scored visually yet** — Tim to open `output/*.svg` in browser/Inkscape
-
-## Follow-ups (not done)
-
-- Tune filter_speckle / color_precision per logo type
-- Optional bg removal preprocess for photo-on-paper samples
-- Web UI after Tim visual OK
-- PDF export post-MVP
+- sample_08 gray banding → optional `--colors 2` or bw path for near-mono marks
+- sample_02 mid greens in palette (antialias) — could tighten merge threshold
+- CMYK not planned (Illustrator downstream)

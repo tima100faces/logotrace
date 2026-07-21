@@ -1,0 +1,250 @@
+"""Dominant palette extraction and remap for flat JPEG/PNG logos."""
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+
+import numpy as np
+from PIL import Image
+
+# Squared distance thresholds (0-255 RGB space)
+BG_DIST2 = 45**2
+NEAR_WHITE_MIN = 230
+# If fewer than this fraction of pixels are near-white, treat as full-bleed brand art
+# (field color is part of the logo, not disposable paper).
+PAPER_WHITE_FRACTION = 0.22
+MERGE_DIST2 = 35**2
+
+
+def _dist2(a: tuple[int, int, int], b: tuple[int, int, int]) -> int:
+    return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
+
+
+def _is_near_white(rgb: tuple[int, int, int]) -> bool:
+    return rgb[0] >= NEAR_WHITE_MIN and rgb[1] >= NEAR_WHITE_MIN and rgb[2] >= NEAR_WHITE_MIN
+
+
+def _as_rgb_tuple(px: object) -> tuple[int, int, int]:
+    if not isinstance(px, tuple) or len(px) < 3:
+        raise TypeError(f"expected RGB tuple, got {px!r}")
+    return (int(px[0]), int(px[1]), int(px[2]))
+
+
+def _median_rgb(pixels: list[tuple[int, int, int]]) -> tuple[int, int, int]:
+    if not pixels:
+        return (255, 255, 255)
+    rs, gs, bs = zip(*pixels)
+    n = len(pixels) // 2
+    return (sorted(rs)[n], sorted(gs)[n], sorted(bs)[n])
+
+
+def estimate_background(img: Image.Image) -> tuple[int, int, int]:
+    """Background ≈ median of border pixels (JPEG paper / studio bg)."""
+    rgb = img.convert("RGB")
+    w, h = rgb.size
+    border: list[tuple[int, int, int]] = []
+    step = max(1, min(w, h) // 200)
+    for x in range(0, w, step):
+        border.append(_as_rgb_tuple(rgb.getpixel((x, 0))))
+        border.append(_as_rgb_tuple(rgb.getpixel((x, h - 1))))
+    for y in range(0, h, step):
+        border.append(_as_rgb_tuple(rgb.getpixel((0, y))))
+        border.append(_as_rgb_tuple(rgb.getpixel((w - 1, y))))
+    light = [p for p in border if _is_near_white(p) or sum(p) > 600]
+    if len(light) >= max(1, len(border) // 3):
+        return _median_rgb(light)
+    return _median_rgb(border)
+
+
+def _bucket(rgb: tuple[int, int, int], bits: int = 4) -> tuple[int, int, int]:
+    shift = 8 - bits
+    return (rgb[0] >> shift, rgb[1] >> shift, rgb[2] >> shift)
+
+
+def _select_from_pixels(
+    ink: np.ndarray,
+    max_colors: int,
+) -> list[tuple[int, int, int]]:
+    """Greedy distinct centers from Nx3 int array."""
+    if ink.size == 0:
+        return [(0, 0, 0)]
+
+    buckets: Counter[tuple[int, int, int]] = Counter()
+    bucket_sums: dict[tuple[int, int, int], list[int]] = {}
+    for px in ink:
+        t = (int(px[0]), int(px[1]), int(px[2]))
+        b = _bucket(t, bits=4)
+        buckets[b] += 1
+        if b not in bucket_sums:
+            bucket_sums[b] = [0, 0, 0, 0]
+        s = bucket_sums[b]
+        s[0] += t[0]
+        s[1] += t[1]
+        s[2] += t[2]
+        s[3] += 1
+
+    selected: list[tuple[int, int, int]] = []
+    for b, _cnt in buckets.most_common():
+        s = bucket_sums[b]
+        n = s[3]
+        center = (s[0] // n, s[1] // n, s[2] // n)
+        if any(_dist2(center, prev) <= MERGE_DIST2 for prev in selected):
+            continue
+        selected.append(center)
+        if len(selected) >= max_colors:
+            break
+    return selected or [(0, 0, 0)]
+
+
+@dataclass(frozen=True)
+class PaletteResult:
+    colors: list[tuple[int, int, int]]
+    mode: str  # "paper" | "fullbleed"
+    background: tuple[int, int, int]
+    white_fraction: float
+
+
+def analyze_palette(
+    img: Image.Image,
+    max_colors: int,
+) -> PaletteResult:
+    """
+    Extract up to max_colors brand colors.
+
+    paper: lots of near-white → drop paper/bg, keep ink only
+    fullbleed: brand field fills frame → keep field color in palette;
+               only pure near-white becomes print white
+    """
+    if max_colors < 1:
+        raise ValueError("max_colors must be >= 1")
+
+    rgb = img.convert("RGB")
+    w, h = rgb.size
+    scale = max(w, h) / 320.0
+    if scale > 1:
+        rgb_s = rgb.resize(
+            (max(1, int(w / scale)), max(1, int(h / scale))),
+            Image.Resampling.BOX,
+        )
+    else:
+        rgb_s = rgb
+
+    arr = np.asarray(rgb_s, dtype=np.int32)
+    flat = arr.reshape(-1, 3)
+    near_white = (
+        (flat[:, 0] >= NEAR_WHITE_MIN)
+        & (flat[:, 1] >= NEAR_WHITE_MIN)
+        & (flat[:, 2] >= NEAR_WHITE_MIN)
+    )
+    white_fraction = float(near_white.mean()) if len(flat) else 0.0
+    bg = estimate_background(rgb)
+    bg_a = np.array(bg, dtype=np.int32)
+    d_bg = np.sum((flat - bg_a) ** 2, axis=1)
+
+    paper_mode = white_fraction >= PAPER_WHITE_FRACTION or _is_near_white(bg)
+
+    if paper_mode:
+        ink_mask = (~near_white) & (d_bg > BG_DIST2)
+        ink = flat[ink_mask]
+        mode = "paper"
+        colors = _select_from_pixels(ink, max_colors)
+        if ink.size == 0:
+            colors = _select_from_pixels(flat[~near_white], max_colors)
+    else:
+        # full-bleed: all non-trivial colors, including field (border) color
+        ink = flat[~near_white] if near_white.any() else flat
+        mode = "fullbleed"
+        colors = _select_from_pixels(ink, max_colors)
+        # ensure border/field color is present if distinct
+        if not any(_dist2(bg, c) <= MERGE_DIST2 for c in colors) and not _is_near_white(bg):
+            colors = [bg] + [c for c in colors if _dist2(c, bg) > MERGE_DIST2]
+            colors = colors[:max_colors]
+
+    if not colors:
+        colors = [(0, 0, 0)]
+
+    return PaletteResult(
+        colors=colors,
+        mode=mode,
+        background=bg,
+        white_fraction=white_fraction,
+    )
+
+
+def extract_logo_colors(
+    img: Image.Image,
+    max_colors: int,
+    *,
+    ignore_background: bool = True,
+) -> list[tuple[int, int, int]]:
+    """Backward-compatible helper → list of RGB tuples."""
+    res = analyze_palette(img, max_colors)
+    if not ignore_background and res.mode == "paper":
+        # force include all major colors
+        return analyze_palette(img, max_colors).colors
+    return res.colors
+
+
+def remap_to_palette(
+    img: Image.Image,
+    palette: list[tuple[int, int, int]],
+    *,
+    background: tuple[int, int, int] | None = None,
+    mode: str = "paper",
+    keep_alpha: bool = False,
+) -> Image.Image:
+    """
+    Snap every pixel to nearest palette color (numpy).
+
+    paper: near-white OR border-bg → pure white
+    fullbleed: only near-white → pure white (brand field stays)
+    """
+    if not palette:
+        raise ValueError("palette must not be empty")
+
+    bg = background if background is not None else estimate_background(img.convert("RGB"))
+    bg_a = np.array(bg, dtype=np.int32)
+    pal = np.array(palette, dtype=np.int32)
+
+    if keep_alpha and img.mode in ("RGBA", "LA"):
+        rgba = np.asarray(img.convert("RGBA"))
+        rgb = rgba[:, :, :3].astype(np.int32)
+        alpha = rgba[:, :, 3]
+    else:
+        rgb = np.asarray(img.convert("RGB"), dtype=np.int32)
+        alpha = None
+
+    h, w, _ = rgb.shape
+    flat = rgb.reshape(-1, 3).astype(np.int64)
+
+    a2 = np.sum(flat**2, axis=1, keepdims=True)
+    b2 = np.sum(pal.astype(np.int64) ** 2, axis=1)[None, :]
+    ab = flat @ pal.astype(np.int64).T
+    d2 = a2 + b2 - 2 * ab
+    nearest_idx = np.argmin(d2, axis=1)
+    mapped = pal[nearest_idx].copy()
+
+    near_white = (
+        (flat[:, 0] >= NEAR_WHITE_MIN)
+        & (flat[:, 1] >= NEAR_WHITE_MIN)
+        & (flat[:, 2] >= NEAR_WHITE_MIN)
+    )
+    d_bg = np.sum((flat.astype(np.int32) - bg_a) ** 2, axis=1)
+
+    if mode == "fullbleed":
+        is_bg = near_white
+    else:
+        is_bg = near_white | (d_bg <= BG_DIST2)
+
+    mapped[is_bg] = np.array([255, 255, 255], dtype=np.int32)
+
+    if keep_alpha and alpha is not None:
+        out_rgb = mapped.reshape(h, w, 3).astype(np.uint8)
+        out_a = alpha.copy()
+        out_a[is_bg.reshape(h, w)] = 0
+        out_a[alpha < 16] = 0
+        out = np.dstack([out_rgb, out_a])
+        return Image.fromarray(out, mode="RGBA")
+
+    out_rgb = mapped.reshape(h, w, 3).astype(np.uint8)
+    return Image.fromarray(out_rgb, mode="RGB")

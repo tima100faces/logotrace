@@ -160,16 +160,28 @@ Do **not** optimize for photo fidelity or automatic circle/star recognition in M
 
 ---
 
-## ADR-10: Web UI after quality validation; PDF post-MVP
+## ADR-11: Primary output = RGB PDF; SVG is debug
 
 **Status:** Accepted  
 **Date:** 2026-07-21
 
-**Context:** Need to prove tracer quality before investing UI. PDF is useful export but not core geometry problem.
+**Context:** User needs polygraphic workflow; SVG not sufficient as final. Further edits in Illustrator. RGB enough (no CMYK in-tool).
+
+**Decision:** Default CLI/API output is **PDF** (vector via rsvg-convert/cairosvg). SVG available via `--format svg` / `format=svg`.
+
+---
+
+## ADR-12: JPEG-first color fidelity pipeline
+
+**Status:** Accepted  
+**Date:** 2026-07-21
+
+**Context:** Multi-color logos collapsed to one fill; hue shifted. Inputs are almost always JPEG scans/photos of logos.
 
 **Decision:**
-- MVP: CLI + API, SVG out
-- After tests: web UI
-- PDF: post-MVP (vector PDF via SVG→PDF, e.g. cairosvg/resvg/inkscape — note: CairoSVG here is OK as **SVG→PDF**, not as tracer)
+1. Analyze palette from original (`paper` vs `fullbleed` modes)
+2. Remap pixels to measured brand colors before trace
+3. Only then VTracer
+4. Transparent PNG still supported; not required for main path
 
-**Rejected:** Web UI or PDF as MVP blockers.
+**Rejected:** Blind quantize without measuring original brand colors.

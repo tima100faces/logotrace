@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse, Response
 from src.config import DEFAULT_COLORS, MAX_COLORS, MAX_UPLOAD_BYTES, MIN_COLORS
 from src.pipeline import VectorizeError, vectorize_bytes
 
-app = FastAPI(title="LogoTrace", version="0.1.0")
+app = FastAPI(title="LogoTrace", version="0.2.0")
 
 
 @app.get("/health")
@@ -18,12 +18,16 @@ def health() -> dict[str, str]:
 async def vectorize(
     file: UploadFile = File(...),
     colors: int = Form(DEFAULT_COLORS),
+    format: str = Form("pdf"),
 ) -> Response:
     if colors < MIN_COLORS or colors > MAX_COLORS:
         raise HTTPException(
             status_code=400,
             detail=f"colors must be {MIN_COLORS}..{MAX_COLORS}",
         )
+    fmt = format.lower().strip()
+    if fmt not in ("pdf", "svg"):
+        raise HTTPException(status_code=400, detail="format must be pdf or svg")
 
     data = await file.read()
     if not data:
@@ -33,12 +37,18 @@ async def vectorize(
 
     name = file.filename or "upload.png"
     try:
-        svg = vectorize_bytes(data, colors=colors, filename_hint=name)
+        payload = vectorize_bytes(data, colors=colors, filename_hint=name, fmt=fmt)
     except VectorizeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    if fmt == "pdf":
+        return Response(
+            content=payload,
+            media_type="application/pdf",
+            headers={"Content-Disposition": 'attachment; filename="logotrace.pdf"'},
+        )
     return Response(
-        content=svg,
+        content=payload,
         media_type="image/svg+xml",
         headers={"Content-Disposition": 'attachment; filename="logotrace.svg"'},
     )

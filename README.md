@@ -1,12 +1,8 @@
 # LogoTrace
 
-Flat logo raster-to-vector tracer (up to N colors, default **4**). Local MVP.
+Flat logo tracer for **JPEG/PNG** → **RGB vector PDF** (SVG optional debug).
 
-Not a Vectorizer.AI clone — classic pipeline: preprocess → **VTracer** → SVG.
-
-## Status
-
-MVP CLI + API implemented. Web UI and PDF are post-MVP.
+Pipeline: measure brand colors → remap → VTracer → PDF.
 
 ## Setup
 
@@ -15,58 +11,50 @@ cd /root/logotrace
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-# binary ships in bin/vtracer (linux x86_64 musl)
-./bin/vtracer --version
+./bin/vtracer --version   # bundled linux x86_64
 ```
+
+Also uses `rsvg-convert` (librsvg2-bin) for SVG→PDF when available.
 
 ## CLI
 
 ```bash
 source .venv/bin/activate
-PYTHONPATH=/root/logotrace python -m src.cli samples/sample_01.jpg -o output/sample_01.svg
-PYTHONPATH=/root/logotrace python -m src.cli input.png -o out.svg --colors 4
+PYTHONPATH=/root/logotrace python -m src.cli samples/sample_06.jpg -o output/sample_06.pdf
+PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.pdf --colors 4
+# debug SVG:
+PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.svg --format svg
 ```
 
-- `--colors N` / `-c N` = **maximum** palette size (default 4)
-- Transparency in PNG is preserved (no white matte)
+- `--colors N` = max **ink** colors (default **4**). Paper/bg handled separately.
+- JPEG is first-class. Transparent PNG alpha preserved when present.
 
 ## API (localhost)
 
 ```bash
-source .venv/bin/activate
 PYTHONPATH=/root/logotrace uvicorn src.api:app --host 127.0.0.1 --port 8095
 
 curl -s http://127.0.0.1:8095/health
-curl -s -F "file=@logo.png" -F "colors=4" http://127.0.0.1:8095/vectorize -o out.svg
+curl -s -F "file=@logo.jpg" -F "colors=4" -F "format=pdf" \
+  http://127.0.0.1:8095/vectorize -o out.pdf
 ```
+
+Default format: **pdf**.
 
 ## Tests
 
 ```bash
-source .venv/bin/activate
 PYTHONPATH=/root/logotrace pytest -q
 ```
 
 ## Docs
 
-| File | What |
-|------|------|
-| [docs/SPEC.md](docs/SPEC.md) | Spec + success criteria |
-| [docs/RESEARCH.md](docs/RESEARCH.md) | Research notes |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | ADRs |
-| [docs/plans/2026-07-21-mvp-implementation.md](docs/plans/2026-07-21-mvp-implementation.md) | Implementation plan |
-| [docs/QA-NOTES.md](docs/QA-NOTES.md) | Sample run results |
-
-## Layout
-
-```
-bin/vtracer     # bundled tracer binary
-src/            # Python package
-samples/        # input logos
-output/         # generated SVG (gitignored)
-tests/
-```
+- `docs/SPEC.md` — product spec
+- `docs/RESEARCH.md` — research
+- `docs/DECISIONS.md` — ADRs
+- `docs/QA-NOTES.md` — sample results
+- `docs/plans/2026-07-21-mvp-implementation.md` — original plan
 
 ## License
 
-GPL-3.0-or-later. See `LICENSE` and `NOTICE` (VTracer MIT binary).
+GPL-3.0-or-later. See `LICENSE`, `NOTICE`.
