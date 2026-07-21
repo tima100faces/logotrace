@@ -155,3 +155,34 @@ Every API/UI convert saves timestamped input + output + meta.json.
 `last.*` symlink-like quick pointers for agent QA.
 Soft cap 500 runs, no time-based prune. `.gitignore` excludes dumps.
 Disabled via `LOGOTRACE_DEBUG_SAVE=0`.
+
+---
+
+## ADR-17: Potrace — benchmark against VTracer baseline, remove if not better
+
+**Status:** Accepted  
+**Date:** 2026-07-21
+
+**Context:** Potrace was kept as optional mono tracer since ADR-2 (July 21).
+No integration work has been done yet. Before building code paths,
+we must prove Potrace earns its place.
+
+**Decision:** Potrace will be benchmarked against the VTracer baseline using
+the evaluation harness (`src/eval.py`). If Potrace does **not** outperform
+VTracer on flat-logo samples (better IoU or Chamfer on at least some),
+it must be removed from the system entirely:
+
+- Binary (`bin/potrace` or system `potrace`)
+- Any Python wrappers, imports, or config references
+- `requirements.txt` / NOTICE / README references
+
+No dormant fallback code. Either it ships because it wins, or it's gone.
+
+**Reasons:**
+- Dead code paths create maintenance burden
+- "Optional fallback" without benchmark data is speculative complexity
+- The eval harness now provides objective comparison data
+
+**Rejected:**
+- Keeping Potrace "just in case" without proving value
+- Shipping both engines unconditionally
