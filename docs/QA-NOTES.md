@@ -24,9 +24,13 @@ python -m src.cli IN.jpg -o OUT.pdf -c 4 --colors-mode up_to -g basic
 python -m src.cli IN.jpg -o OUT.pdf -c 2 --colors-mode exact -g strict
 ```
 
-## Automated
-- pytest: 15 passed
-- **Self-verify:** each PDF reverse-rasterized; ink_coverage matched source (not blank)
+## Round 4 (gradient crush + edge smooth) — `b12ad0a`
+
+- Gray/same-hue ramps → one solid ink; distinct hues kept
+- sample_08: single ink fill (no gray band stack in SVG)
+- Light morph smooth per label before trace
+- geom remains **off** by default
+- Agent verified all 8 PDFs non-blank
 
 ## Sample re-run (all 8, geom=basic) — agent-verified
 All `output/sample_0X.pdf` non-blank via pdftoppm.
