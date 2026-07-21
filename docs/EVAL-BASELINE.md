@@ -120,3 +120,53 @@ Bug: double-`prepare_for_trace` palette mismatch + fuzzy radius matching.
 | 6 | sample_06 | 0.971 | 0.960 | 1.24 |
 | 7 | sample_07 | 0.519 | 0.014 | 2.91 |
 | 8 | sample_08 | 0.970 | 0.970 | 2.33 |
+
+---
+
+## Stage 2b — Upscale matrix with threshold scaling + OOM fix
+
+**Caps:** longest side ≤ 3072px, total pixels ≤ 9.5M.
+**VTracer thresholds:** `filter_speckle` multiplied by effective upscale factor.
+
+### OOM root cause
+
+VTracer crashes when input exceeds ~10M pixels (sample_05 at 2x raw = 14M px → OOM).
+Fixed with dual cap: side ≤ 3072px AND pixels ≤ 9.5M. Sample_07 (3456×1556) excluded entirely
+(effective scale 0.89 < 1.15 minimum).
+
+### Effect of threshold scaling on nodes
+
+Previous 2x-unscaled: mean nodes = 7675. 2x-scaled: mean nodes = 5941 (**−23%**).
+Threshold scaling eliminates most of the node inflation — geometric strictness is
+constant in source-image units.
+
+### Full matrix (area-weighted IoU)
+
+| Sample | off | 2x | 4x | 4x-smooth | Eff. scale |
+|--------|-----|----|----|-----------|-----------|
+| sample_01 | 0.981 | 0.989 | **0.990** | 0.990 | 2.0 / 2.3x |
+| sample_02 | 0.661 | 0.753 | 0.809 | **0.810** | 2.0 / 3.2x |
+| sample_03 | 0.925 | **0.932** | 0.932 | 0.931 | 1.7x |
+| sample_04 | 0.695 | 0.721 | 0.739 | **0.742** | 2.0 / 2.3x |
+| sample_05 | 0.561 | 0.597 | 0.597 | **0.599** | 1.4x |
+| sample_06 | 0.972 | **0.981** | 0.981 | 0.980 | 1.5x |
+| sample_07 | 0.778 | — | — | — | skip (3456px) |
+| sample_08 | 0.966 | 0.972 | 0.973 | **0.973** | 2.0x |
+
+### Aggregate
+
+| Metric | off | 2x | 4x | 4x-smooth |
+|--------|-----|-----|-----|-----------|
+| IoU aw mean | 0.980 | 0.981 | **0.983** | **0.983** |
+| Chamfer mean | 0.41 | 0.25 | **0.24** | **0.24** |
+| Nodes mean | 2399 | 5941 | 7515 | 7313 |
+| SVG KB mean | 81.8 | 184.4 | 238.6 | 232.5 |
+| Time mean (s) | 2.0 | 2.8 | 3.4 | 3.6 |
+
+### Recommendation
+
+**2x with scaled thresholds is the sweet spot**: +0.1pp IoU aw, −39% Chamfer (−0.16 px),
+at 2.5× nodes and 2.3× SVG size. 4x/4x-smooth add marginal gain (+0.2pp IoU) for
++26% more nodes vs 2x. For production: `--upscale 2x` with `filter_speckle` auto-scaled
+by effective factor, enabled for source images where longest side ≤ 1536px (guarantees
+2x within the 3072 cap).

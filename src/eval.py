@@ -164,41 +164,50 @@ def _masks_identical(a: np.ndarray, b: np.ndarray) -> bool:
 # ---------------------------------------------------------------------------
 
 UPSCALE_VARIANTS = {"off", "2x", "4x", "4x-smooth"}
-MAX_UPSCALE_PX = 8_000_000  # skip variant if upscaled pixels exceed this
+MAX_UPSCALE_SIDE = 3072  # cap longest side
+MAX_UPSCALE_PX = 9_500_000  # cap total pixels (VTracer OOM above ~10M)
 
 
-def _upscale_image(img: Image.Image, variant: str) -> tuple[Image.Image, int] | None:
-    """Upscale image for pre-trace experiment. Returns (upscaled_img, scale_factor)
-    or None if upscaled size exceeds memory budget."""
+def _upscale_image(img: Image.Image, variant: str) -> tuple[Image.Image, float] | None:
+    """Upscale image for pre-trace experiment.
+
+    Returns (upscaled_img, effective_scale) or None if effective scale < 1.15
+    (too small to matter) or upscaled pixels > MAX_UPSCALE_PX.
+    Effective scale is capped so longest side ≤ MAX_UPSCALE_SIDE.
+    """
     if variant == "off" or variant == "none":
-        return img.copy(), 1
+        return img.copy(), 1.0
     if variant == "2x":
-        scale = 2
+        requested_scale = 2.0
     elif variant == "4x" or variant == "4x-smooth":
-        scale = 4
+        requested_scale = 4.0
     else:
         raise ValueError(f"unknown upscale variant: {variant}")
 
-    up_w, up_h = img.width * scale, img.height * scale
+    max_side = max(img.width, img.height)
+    effective = min(requested_scale, MAX_UPSCALE_SIDE / max_side)
+    if effective < 1.15:
+        return None  # too little upscale to matter
+
+    up_w = int(img.width * effective)
+    up_h = int(img.height * effective)
     if up_w * up_h > MAX_UPSCALE_PX:
-        return None  # signal to skip
+        return None  # would OOM VTracer
 
     up = img.resize((up_w, up_h), Image.Resampling.LANCZOS)
     if variant == "4x-smooth":
         up = up.filter(ImageFilter.GaussianBlur(radius=0.7))
         up = up.filter(ImageFilter.UnsharpMask(radius=1.0, percent=80, threshold=2))
-    return up, scale
+    return up, effective
 
 
-def _wrap_svg_scaled(svg_text: str, scale: int, orig_w: int, orig_h: int) -> str:
+def _wrap_svg_scaled(svg_text: str, scale: float, orig_w: int, orig_h: int) -> str:
     """Wrap SVG content in scaled group AND fix viewport to original dimensions."""
-    if scale <= 1:
+    if scale <= 1.0:
         return svg_text
     inv = 1.0 / scale
-    # Override viewport to original dimensions
     svg_text = re.sub(r'width="\d+(\.\d+)?"', f'width="{orig_w}"', svg_text)
     svg_text = re.sub(r'height="\d+(\.\d+)?"', f'height="{orig_h}"', svg_text)
-    # Insert <g transform> after the <svg ...> opening tag
     svg_text = re.sub(
         r'(<svg\b[^>]*>)',
         rf'\1\n<g transform="scale({inv:.6f}, {inv:.6f})">',
@@ -220,15 +229,24 @@ def evaluate_sample(
     colors_mode: str = COLORS_MODE_UP_TO,
     geom: str = "off",
     upscale: str = "off",
+    vtracer_threshold_scale: float = 1.0,
     dump_diffs_dir: Path | str | None = None,
 ) -> dict:
-    """Run pipeline on a sample and return a dict of metrics."""
+    """Run pipeline on a sample and return a dict of metrics.
+
+    vtracer_threshold_scale: multiply pixel-unit VTracer params
+    (filter_speckle) by this factor. Use with upscale to keep
+    geometric strictness constant in source-image units.
+    """
+    import src.config as _cfg
+
     t0 = time.monotonic()
     input_path = Path(input_path)
     src_img = load_image(input_path)
     w, h = src_img.size
     src_rgb = np.asarray(src_img.convert("RGB"))
     total_px = w * h
+    effective_scale: float = 1.0
 
     with tempfile.TemporaryDirectory(prefix="logotrace-eval-") as tmp:
         tmpdir = Path(tmp)
@@ -236,7 +254,6 @@ def evaluate_sample(
         # 1 ─ Upscale preprocess (if requested)
         result = _upscale_image(src_img, upscale)
         if result is None:
-            # Upscaled image too large for memory budget
             elapsed = round(time.monotonic() - t0, 1)
             return {
                 "sample": input_path.stem, "file": input_path.name,
@@ -245,11 +262,12 @@ def evaluate_sample(
                 "iou_mean": None, "iou_worst": None, "iou_bg": None,
                 "iou_aw": None, "iou_unmatched": 0, "chamfer": None,
                 "nodes": None, "svg_bytes": 0, "render_ok": False,
-                "upscale": upscale, "elapsed": elapsed,
-                "error": "OOM: upscaled image too large",
+                "upscale": upscale, "effective_scale": 1.0,
+                "elapsed": elapsed,
+                "error": "upscale skipped (effective scale < 1.2)",
             }
-        upscaled_img, up_scale = result
-        if up_scale > 1:
+        upscaled_img, effective_scale = result
+        if effective_scale > 1.0:
             up_path = tmpdir / "upscaled.png"
             upscaled_img.save(up_path, format="PNG")
             pipeline_input: Path | str = up_path
@@ -257,12 +275,17 @@ def evaluate_sample(
             pipeline_input = input_path
 
         # 2 ─ Run pipeline → SVG + canonical ink palette
+        # Apply VTracer threshold scaling if requested
+        _saved_speckle = _cfg.VTRACER_FILTER_SPECKLE
+        if vtracer_threshold_scale > 1.0:
+            _cfg.VTRACER_FILTER_SPECKLE = max(1, int(_cfg.VTRACER_FILTER_SPECKLE * vtracer_threshold_scale))
         try:
             svg_text, inks = vectorize_to_svg(
                 input_path=pipeline_input, colors=colors,
                 colors_mode=colors_mode, geom=geom,
             )
         except VectorizeError as exc:
+            _cfg.VTRACER_FILTER_SPECKLE = _saved_speckle
             elapsed = round(time.monotonic() - t0, 1)
             return {
                 "sample": input_path.stem, "file": input_path.name,
@@ -272,13 +295,16 @@ def evaluate_sample(
                 "iou_aw": None,
                 "iou_unmatched": 0, "chamfer": None,
                 "nodes": None, "svg_bytes": 0, "render_ok": False,
-                "upscale": upscale, "elapsed": elapsed,
+                "upscale": upscale, "effective_scale": effective_scale,
+                "elapsed": elapsed,
                 "error": str(exc),
             }
 
+        _cfg.VTRACER_FILTER_SPECKLE = _saved_speckle
+
         # 3 ─ Scale SVG coords back if upscaled
-        if up_scale > 1:
-            svg_text = _wrap_svg_scaled(svg_text, up_scale, w, h)
+        if effective_scale > 1.0:
+            svg_text = _wrap_svg_scaled(svg_text, effective_scale, w, h)
 
         svg_bytes = len(svg_text.encode("utf-8"))
 
@@ -427,6 +453,7 @@ def evaluate_sample(
             "render_ok": render_ok,
             "degenerate": degenerate,
             "upscale": upscale,
+            "effective_scale": effective_scale,
             "elapsed": elapsed,
             "per_mask": per_mask,
         }
@@ -635,31 +662,53 @@ def run_matrix(
         print("error: no sample_*.jpg files", file=sys.stderr)
         return 1
 
-    variants = ["off", "2x", "4x", "4x-smooth"]
+    # Variants: off, 2x scaled, 4x scaled, 4x-smooth scaled
+    # Each upscale variant passes vtracer_threshold_scale = effective_scale
+    variants_config = [
+        ("off", "off", 1.0),
+        ("2x", "2x", None),       # None = auto (effective_scale from upscale)
+        ("4x", "4x", None),
+        ("4x-smooth", "4x-smooth", None),
+    ]
     all_results: dict[str, list[dict]] = {}
 
-    for variant in variants:
+    for var_name, upscale_val, thresh_override in variants_config:
         print(f"\n{'='*60}")
-        print(f"VARIANT: {variant}")
+        print(f"VARIANT: {var_name}")
         print(f"{'='*60}")
         results = []
         for i, sp in enumerate(samples, 1):
             print(f"  [{i}/{len(samples)}] {sp.name} …", end=" ", flush=True)
+            # thresh_scale: use effective_scale from upscale result, or 1.0 for off
+            # We need to know effective_scale BEFORE running pipeline, but
+            # _upscale_image gives it. So we call _upscale_image first, then
+            # use the returned scale as threshold.
+            from src.eval import _upscale_image as _up
+            up_result = _up(load_image(sp), upscale_val)
+            if up_result is None:
+                eff = 1.0
+            else:
+                _, eff = up_result
+            thresh = thresh_override if thresh_override is not None else eff
+
             r = evaluate_sample(
                 sp, colors=colors, colors_mode=colors_mode, geom=geom,
-                upscale=variant,
+                upscale=upscale_val,
+                vtracer_threshold_scale=thresh,
             )
             results.append(r)
-            print(f"IoU={_val(r['iou_mean'])} Ch={_val(r['chamfer'],'.1f')}px {r.get('elapsed','?')}s")
-        all_results[variant] = results
-        out_path = Path(output_dir) / f"eval_{variant.replace('-', '_')}.md"
-        generate_report(results, out_path, version=f"v3-{variant}")
+            eff_str = f" eff={r.get('effective_scale',1.0):.1f}x" if r.get('effective_scale',1.0) > 1.0 else ""
+            print(f"IoU={_val(r['iou_mean'])} Ch={_val(r['chamfer'],'.1f')}px {r.get('elapsed','?')}s{eff_str}")
+        all_results[var_name] = results
+        out_path = Path(output_dir) / f"eval_{var_name.replace('-', '_')}.md"
+        generate_report(results, out_path, version=f"v3-{var_name}")
 
+    variant_names = [vn for vn, _, _ in variants_config]
     # Build comparison matrix
     lines = [
-        "# Upscale Variant Comparison Matrix",
+        "# Upscale Variant Comparison Matrix (scaled thresholds)",
         "",
-        f"**Samples:** {len(samples)}",
+        f"**Samples:** {len(samples)}  **Caps:** side≤{MAX_UPSCALE_SIDE}px, px≤{MAX_UPSCALE_PX//1_000_000}M",
         f"**Date:** 2026-07-21",
         "",
         "## IoU mean",
@@ -669,11 +718,11 @@ def run_matrix(
     ]
     for i, sp in enumerate(samples):
         vals = {}
-        for v in variants:
+        for v in variant_names:
             r = all_results[v][i]
             vals[v] = r["iou_mean"]
         best = max(v for v in vals.values() if v is not None)
-        best_var = [v for v in variants if vals[v] == best][0]
+        best_var = [v for v in variant_names if vals[v] == best][0]
         lines.append(
             f"| `{sp.stem}` | {_val(vals['off'])} | {_val(vals['2x'])} "
             f"| {_val(vals['4x'])} | {_val(vals['4x-smooth'])} | **{best_var}** {best:.4f} |"
@@ -686,7 +735,7 @@ def run_matrix(
     lines.append("|--------|-----|----|----|-----------|------|")
     for i, sp in enumerate(samples):
         vals = {}
-        for v in variants:
+        for v in variant_names:
             r = all_results[v][i]
             vals[v] = r["chamfer"]
         valid = {v: c for v, c in vals.items() if c is not None}
@@ -706,7 +755,7 @@ def run_matrix(
     lines.append("| Sample | off | 2x | 4x | 4x-smooth |")
     lines.append("|--------|-----|----|----|-----------|")
     for i, sp in enumerate(samples):
-        vals = {v: all_results[v][i]["nodes"] for v in variants}
+        vals = {v: all_results[v][i]["nodes"] for v in variant_names}
         lines.append(
             f"| `{sp.stem}` | {vals['off']} | {vals['2x']} "
             f"| {vals['4x']} | {vals['4x-smooth']} |"
@@ -718,7 +767,7 @@ def run_matrix(
     lines.append("| Sample | off | 2x | 4x | 4x-smooth |")
     lines.append("|--------|-----|----|----|-----------|")
     for i, sp in enumerate(samples):
-        vals = {v: all_results[v][i].get("elapsed", 0) for v in variants}
+        vals = {v: all_results[v][i].get("elapsed", 0) for v in variant_names}
         lines.append(
             f"| `{sp.stem}` | {vals['off']} | {vals['2x']} "
             f"| {vals['4x']} | {vals['4x-smooth']} |"
@@ -739,7 +788,7 @@ def run_matrix(
         ("Time (s)", "elapsed", ".1f"),
     ]:
         row = f"| {metric} |"
-        for v in variants:
+        for v in variant_names:
             vals = [r[key] for r in all_results[v] if r.get(key) is not None]
             if not vals:
                 row += " — |"
