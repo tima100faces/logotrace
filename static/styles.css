@@ -1,4 +1,4 @@
-/* LogoTrace UI — light, quiet chrome; stable split panes */
+/* LogoTrace UI — light, quiet chrome; symmetrical split panes */
 :root {
   --bg: #f4f3ef;
   --panel: #ffffff;
@@ -61,7 +61,7 @@ h1 {
   line-height: 1.1;
 }
 
-/* Equal columns — height locked; zoom must not reflow the page */
+/* Two equal columns — same height, controls aligned to bottom */
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -89,6 +89,7 @@ h1 {
   overflow: hidden;
 }
 
+/* Drop zone fills panel; controls stay at bottom naturally via flex */
 .drop {
   flex: 1;
   min-height: 0;
@@ -154,25 +155,18 @@ kbd {
 }
 .hidden { display: none !important; }
 
-.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.meta-row { min-height: 28px; flex-shrink: 0; }
-.muted { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.field { flex-shrink: 0; }
-.label {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 8px;
+/* Controls: segmented colors + Clear + Vectorize in one row, status under */
+.controls {
+  flex-shrink: 0;
 }
-.hint {
-  margin: 8px 0 0;
-  font-size: 13px;
-  color: var(--muted);
-  line-height: 1.4;
+.controls-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.controls-row .seg {
+  margin-right: auto; /* push Clear + Vectorize to the right */
 }
 
 .seg {
@@ -229,16 +223,16 @@ kbd {
   color: var(--accent-fg);
 }
 .btn.primary:hover:not(:disabled) { background: #000; border-color: #000; }
-.btn.ghost {
-  border-color: transparent;
-  background: transparent;
+.btn.muted-btn {
+  background: #fff;
+  border-color: var(--line);
   color: var(--muted);
-  padding: 6px 8px;
-  font-size: 13px;
-  font-weight: 500;
 }
-.btn.ghost:hover:not(:disabled) { color: var(--ink); background: rgba(0,0,0,.04); }
-.btn.small { padding: 8px 12px; font-size: 13px; }
+.btn.muted-btn:hover:not(:disabled) {
+  background: #fafaf7;
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
 .btn.icon {
   width: 32px;
   height: 32px;
@@ -253,10 +247,14 @@ kbd {
   font-weight: 600;
 }
 
-#btn-run { width: 100%; margin-top: 4px; flex-shrink: 0; }
+#btn-run, #btn-download {
+  padding: 11px 16px; /* match segmented height */
+  font-size: 15px;
+  font-weight: 600;
+}
 
 .status {
-  margin: 0;
+  margin: 4px 0 0;
   min-height: 1.25em;
   font-size: 13px;
   color: var(--muted);
@@ -265,22 +263,15 @@ kbd {
 .status.err { color: var(--danger); }
 .status.ok { color: var(--ok); }
 
-.out-head {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-.out-head .label { margin: 0; }
-
+/* Output side: preview fills; zoom/download in foot bar */
 .out-empty,
 .out-stage {
   flex: 1 1 auto;
-  min-height: 0; /* lock pane; scroll inside on zoom */
+  min-height: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #fafaf7;
 }
-
 .out-empty {
   display: flex;
   align-items: center;
@@ -288,7 +279,6 @@ kbd {
   color: var(--muted);
   font-size: 15px;
 }
-
 .out-stage {
   overflow: auto;
   display: flex;
@@ -316,17 +306,14 @@ kbd {
   flex-shrink: 0;
 }
 
-/* Controls stay under preview — no mouse trip to the top */
 .out-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-shrink: 0;
-  min-height: 40px;
   flex-wrap: wrap;
 }
-
 .zoom-bar {
   display: inline-flex;
   align-items: center;

@@ -21,7 +21,6 @@
   const dropEmpty = $("drop-empty");
   const previewIn = $("preview-in");
   const fileInput = $("file");
-  const fileLabel = $("file-label");
   const btnClear = $("btn-clear");
   const btnRun = $("btn-run");
   const btnDownload = $("btn-download");
@@ -110,11 +109,10 @@
     previewIn.classList.remove("hidden");
     dropEmpty.classList.add("hidden");
     drop.classList.add("has-file");
-    fileLabel.textContent = `${file.name || "pasted-image"} · ${formatBytes(file.size)}`;
     btnClear.classList.remove("hidden");
     btnRun.disabled = false;
     revokePdf();
-    setStatus("Ready to convert.");
+    setStatus("");
   }
 
   function clearFile() {
@@ -123,7 +121,6 @@
     previewIn.classList.add("hidden");
     dropEmpty.classList.remove("hidden");
     drop.classList.remove("has-file");
-    fileLabel.textContent = "No file";
     btnClear.classList.add("hidden");
     btnRun.disabled = true;
     revokePdf();
@@ -323,7 +320,7 @@
     { passive: false }
   );
 
-  // Hand tool: drag to pan inside the fixed stage (no page reflow)
+  // Hand tool: drag to pan inside the fixed stage
   let panning = false;
   let panX = 0;
   let panY = 0;
@@ -371,7 +368,7 @@
   async function convert() {
     if (!currentFile) return;
     btnRun.disabled = true;
-    setStatus("Converting…");
+    setStatus("Vectorizing…");
     revokePdf();
 
     const fd = new FormData();

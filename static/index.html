@@ -37,31 +37,23 @@
         </div>
         <input id="file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
 
-        <div class="row meta-row">
-          <span id="file-label" class="muted">No file</span>
-          <button type="button" id="btn-clear" class="btn ghost hidden">Clear</button>
-        </div>
-
-        <div class="field">
-          <label class="label">Colors</label>
-          <div class="seg" id="palette-seg" role="group" aria-label="Color count">
-            <button type="button" class="seg-btn active" data-palette="auto">Auto</button>
-            <button type="button" class="seg-btn" data-palette="1">1</button>
-            <button type="button" class="seg-btn" data-palette="2">2</button>
-            <button type="button" class="seg-btn" data-palette="3">3</button>
-            <button type="button" class="seg-btn" data-palette="4">4</button>
+        <div class="controls">
+          <div class="controls-row">
+            <div class="seg" id="palette-seg" role="group" aria-label="Color count">
+              <button type="button" class="seg-btn active" data-palette="auto">Auto</button>
+              <button type="button" class="seg-btn" data-palette="1">1</button>
+              <button type="button" class="seg-btn" data-palette="2">2</button>
+              <button type="button" class="seg-btn" data-palette="3">3</button>
+              <button type="button" class="seg-btn" data-palette="4">4</button>
+            </div>
+            <button type="button" id="btn-clear" class="btn muted-btn hidden">Clear</button>
+            <button type="button" id="btn-run" class="btn primary" disabled>Vectorize</button>
           </div>
-          <p class="hint">Auto smart-detects. Pick a number for exact ink count.</p>
+          <p id="status" class="status" role="status"></p>
         </div>
-
-        <button type="button" id="btn-run" class="btn primary" disabled>Convert to PDF</button>
-        <p id="status" class="status" role="status"></p>
       </section>
 
       <section class="panel out-panel">
-        <div class="out-head">
-          <label class="label">Result</label>
-        </div>
         <div id="out-empty" class="out-empty">
           <p>PDF preview appears here</p>
         </div>
@@ -75,7 +67,7 @@
             <button type="button" id="zoom-in" class="btn icon" title="Zoom in" aria-label="Zoom in">+</button>
             <span id="zoom-label" class="zoom-label">100%</span>
           </div>
-          <a id="btn-download" class="btn primary small hidden" download="logotrace.pdf">Download PDF</a>
+          <a id="btn-download" class="btn primary hidden" download="logotrace.pdf">Download PDF</a>
         </div>
       </section>
     </main>
