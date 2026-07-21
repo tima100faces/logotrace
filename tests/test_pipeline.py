@@ -11,7 +11,7 @@ from src.colors import (
     remap_to_palette,
 )
 from src.config import DEFAULT_COLORS
-from src.geometry import GEOM_BASIC, normalize_svg_geometry
+from src.geometry import GEOM_BASIC, GEOM_OFF, normalize_svg_geometry
 from src.pipeline import VectorizeError, vectorize_bytes, vectorize_file, vectorize_to_svg
 from src.tracer_vtracer import resolve_vtracer_bin
 
