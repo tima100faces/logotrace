@@ -131,3 +131,45 @@ Do **not** optimize for photo fidelity or automatic circle/star recognition in M
 **Context:** User asked for local repo init. Other repos sometimes restricted on remote.
 
 **Decision:** Local `git init` on main only. Push/remote only on explicit request.
+
+---
+
+## ADR-8: Palette = up to N colors (not exactly N)
+
+**Status:** Accepted  
+**Date:** 2026-07-21
+
+**Context:** User cannot yet lock exact color counts; logos vary. Forced exact-N can invent junk colors or crush real ones.
+
+**Decision:** `--colors N` / API `colors=N` means **maximum** palette size. Engine may use fewer. Default N left slightly open (proposal: 3) until samples.
+
+**Rejected:** Always exactly N colors in output.
+
+---
+
+## ADR-9: Preserve transparency (no white matte)
+
+**Status:** Accepted  
+**Date:** 2026-07-21
+
+**Context:** Logos often sit on transparent PNG. Flattening to white destroys reuse on dark backgrounds.
+
+**Decision:** If source has alpha/transparency, keep transparent background in SVG. Do not composite onto white.
+
+**Rejected:** Always flatten on white for "simpler" trace.
+
+---
+
+## ADR-10: Web UI after quality validation; PDF post-MVP
+
+**Status:** Accepted  
+**Date:** 2026-07-21
+
+**Context:** Need to prove tracer quality before investing UI. PDF is useful export but not core geometry problem.
+
+**Decision:**
+- MVP: CLI + API, SVG out
+- After tests: web UI
+- PDF: post-MVP (vector PDF via SVG→PDF, e.g. cairosvg/resvg/inkscape — note: CairoSVG here is OK as **SVG→PDF**, not as tracer)
+
+**Rejected:** Web UI or PDF as MVP blockers.

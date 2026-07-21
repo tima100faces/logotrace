@@ -3,7 +3,7 @@
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task after human approval.  
 > **Gate:** Do not start Task 1 until Tim says «делай» / «погнали» / approves this plan.
 
-**Goal:** Ship a local flat-logo tracer (1-3 colors) with CLI + minimal FastAPI, backed by VTracer.
+**Goal:** Ship a local flat-logo tracer (up to N colors, default ~3) with CLI + minimal FastAPI, backed by VTracer. Preserve alpha. SVG first; PDF/web UI later.
 
 **Architecture:** Thin Python orchestration: preprocess (Pillow) → subprocess VTracer → SVG postprocess → CLI/API facades. No custom ML.
 

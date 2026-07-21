@@ -11,18 +11,26 @@ Build a local tool that converts **flat logo rasters** (1-3 solid colors) into *
 
 1. As an operator, I drop a 2-color PNG logo and get an SVG with two flat fills and editable paths.
 2. As a developer, I `POST` an image to `/vectorize` and receive `image/svg+xml`.
-3. As an operator, I can force `--colors 1|2|3` when auto palette is wrong.
+3. As an operator, I can set `--colors N` as **max palette size** (up to N, not always exactly N).
+4. As an operator, if the source has transparency, the SVG keeps transparent background (no forced white matte).
 
 ### Success criteria (MVP done when)
 
 - [ ] CLI converts PNG/JPG/WebP → SVG for samples in `samples/`
 - [ ] HTTP `GET /health` → 200
 - [ ] HTTP `POST /vectorize` accepts image, returns SVG
-- [ ] `--colors N` forces palette size N ∈ {1,2,3}
+- [ ] `--colors N` means **at most N** colors (default TBD; start with default 3)
+- [ ] Transparent source → transparent SVG background (do not flatten onto white)
 - [ ] Output is flat fills (no intentional gradients)
 - [ ] At least one automated test with a tiny fixture image
 - [ ] README documents install + usage
 - [ ] Side-by-side notes on 3+ real logos after user uploads samples (manual QA)
+
+### Post-MVP (not blocking MVP)
+
+- Web UI (after tracer quality is validated on real samples)
+- PDF export (vector PDF from SVG)
+- Tune exact default N and auto-detect heuristics
 
 ---
 
@@ -158,12 +166,19 @@ def vectorize(image_bytes: bytes, colors: int = 2) -> str:
 
 ---
 
-## Open Questions (for Tim before or during spike)
+## Decisions from Tim (2026-07-21)
 
-1. Default port / only CLI for first week?
-2. Prefer **strict** palette (exactly N colors) vs "up to N"?
-3. Background transparency: preserve alpha hole vs force opaque?
-4. When samples arrive: pass/fail threshold — "usable in Inkscape without edits" vs "ok with 2 min cleanup"?
+1. **Interfaces:** MVP — CLI + API both fine for tests. **Web UI after** quality tests. Not in MVP.
+2. **Colors:** **up to N**, not forced exact N. Exact default N and auto-detect still open (decision forks later on samples).
+3. **Transparency:** if alpha present → **keep transparent**, do not paste on white.
+4. **PDF:** wanted eventually; **not required in MVP** (SVG first).
+
+## Still open (minor — can resolve on samples)
+
+1. Default `N` for `--colors` when user omits flag (proposal: **3**)
+2. Auto-detect palette size vs always use default N
+3. Manual QA bar: "usable without edits" vs "ok with 2 min cleanup"
+4. Public bind vs localhost-only for API during tests (proposal: **127.0.0.1**)
 
 ---
 
@@ -173,3 +188,4 @@ def vectorize(image_bytes: bytes, colors: int = 2) -> str:
 2. English code/docs filenames; Russian OK in chat only
 3. No remote GitHub until you say push
 4. Samples you upload may be used as test fixtures inside this repo unless you say private-only
+5. Primary deliverable of MVP is **SVG**; PDF is post-MVP conversion from SVG
