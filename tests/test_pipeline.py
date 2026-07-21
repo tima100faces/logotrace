@@ -7,6 +7,7 @@ from src.colors import (
     COLORS_MODE_EXACT,
     COLORS_MODE_UP_TO,
     analyze_palette,
+    collapse_gradient_ramps,
     extract_logo_colors,
     remap_to_palette,
 )
@@ -81,17 +82,24 @@ def test_exact_mode_collapses_to_n():
 
 
 def test_mass_aware_keeps_two_close_majors():
-    """Two large regions with close hues must both survive (not dust-merge)."""
+    """Two large regions with distinct hues must both survive."""
     img = Image.new("RGB", (100, 60), (255, 255, 255))
-    # two big blocks, moderately close greens
     for x in range(5, 45):
         for y in range(5, 55):
-            img.putpixel((x, y), (40, 100, 50))
+            img.putpixel((x, y), (200, 40, 40))  # red
     for x in range(55, 95):
         for y in range(5, 55):
-            img.putpixel((x, y), (55, 120, 70))
+            img.putpixel((x, y), (40, 50, 190))  # blue
     pal = analyze_palette(img, 4, colors_mode=COLORS_MODE_UP_TO).colors
     assert len(pal) >= 2
+
+
+def test_gradient_grays_collapse_to_one_ink():
+    cols = [(20, 20, 20), (60, 60, 60), (100, 100, 100), (160, 160, 160), (210, 40, 40)]
+    out = collapse_gradient_ramps(cols, max_colors=4)
+    grays = [c for c in out if max(c) - min(c) < 40]
+    assert len(grays) == 1
+    assert any(c[0] > 150 for c in out)  # red kept
 
 
 def test_remap_keeps_palette(tiny_logo: Path):

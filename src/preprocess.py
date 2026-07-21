@@ -3,7 +3,8 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image
+import numpy as np
+from PIL import Image, ImageFilter
 
 from src.colors import COLORS_MODE_UP_TO, analyze_palette, remap_to_palette
 from src.config import MAX_COLORS, MIN_COLORS
@@ -57,6 +58,57 @@ def has_meaningful_alpha(img: Image.Image) -> bool:
     return False
 
 
+def _smooth_label_edges(img: Image.Image) -> Image.Image:
+    """Morphological close+open per solid color — less stair-step without new hues."""
+    if img.mode == "RGBA":
+        rgb = img.convert("RGB")
+        alpha = img.getchannel("A")
+        has_a = True
+    else:
+        rgb = img.convert("RGB")
+        alpha = None
+        has_a = False
+
+    arr = np.asarray(rgb, dtype=np.uint8)
+    h, w, _ = arr.shape
+    flat = arr.reshape(-1, 3)
+    uniq = np.unique(flat, axis=0)
+    if len(uniq) == 0 or len(uniq) > 32:
+        return img
+
+    # Paint lighter colors first, darker ink last so ink wins overlaps
+    order = sorted(
+        [tuple(int(x) for x in c) for c in uniq],
+        key=lambda c: (c[0] + c[1] + c[2]),
+        reverse=True,
+    )
+    out = np.zeros_like(arr)
+    painted = np.zeros((h, w), dtype=bool)
+    for col in order:
+        mask = (
+            (arr[:, :, 0] == col[0])
+            & (arr[:, :, 1] == col[1])
+            & (arr[:, :, 2] == col[2])
+        )
+        if not mask.any():
+            continue
+        m_img = Image.fromarray((mask.astype(np.uint8) * 255), mode="L")
+        m_img = m_img.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
+        m_img = m_img.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.MaxFilter(3))
+        m2 = np.asarray(m_img) > 127
+        out[m2] = np.array(col, dtype=np.uint8)
+        painted |= m2
+    if (~painted).any():
+        out[~painted] = arr[~painted]
+
+    result = Image.fromarray(out, mode="RGB")
+    if has_a and alpha is not None:
+        a = alpha.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
+        result = result.convert("RGBA")
+        result.putalpha(a)
+    return result
+
+
 def prepare_for_trace(
     source: Path | bytes | Image.Image,
     max_colors: int,
@@ -64,11 +116,7 @@ def prepare_for_trace(
     *,
     colors_mode: str = COLORS_MODE_UP_TO,
 ) -> tuple[Path, list[tuple[int, int, int]], str]:
-    """
-    Extract brand palette from original, remap, write PNG for tracer.
-
-    Returns (png_path, palette_rgb, paper_mode).
-    """
+    """Extract palette (gradient-crushed), remap, edge smooth, write PNG."""
     max_colors = _validate_colors(max_colors)
     img = load_image(source)
     keep_alpha = has_meaningful_alpha(img)
@@ -81,6 +129,7 @@ def prepare_for_trace(
         mode=analysis.mode,
         keep_alpha=keep_alpha,
     )
+    prepared = _smooth_label_edges(prepared)
 
     dest_path = Path(dest_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)

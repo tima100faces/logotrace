@@ -22,6 +22,10 @@ MIN_ABSOLUTE_COUNT = 8
 COLORS_MODE_UP_TO = "up_to"
 COLORS_MODE_EXACT = "exact"
 
+# Gradient collapse: low-saturation chain → one ink; same-hue L-ramp → one anchor
+GRAY_SAT_MAX = 0.14
+HUE_BUCKET_DEG = 28.0
+
 
 def _dist2(a: tuple[int, int, int], b: tuple[int, int, int]) -> int:
     return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
@@ -181,14 +185,113 @@ def _mass_aware_select(
     return [c.center for c in picked] or [(0, 0, 0)]
 
 
+def _lightness(rgb: tuple[int, int, int]) -> float:
+    return (rgb[0] + rgb[1] + rgb[2]) / 3.0
+
+
+def _saturation(rgb: tuple[int, int, int]) -> float:
+    r, g, b = rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0
+    mx, mn = max(r, g, b), min(r, g, b)
+    if mx < 1e-9:
+        return 0.0
+    return (mx - mn) / mx
+
+
+def _hue_deg(rgb: tuple[int, int, int]) -> float:
+    r, g, b = rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0
+    mx, mn = max(r, g, b), min(r, g, b)
+    if mx - mn < 1e-9:
+        return 0.0
+    if mx == r:
+        h = (g - b) / (mx - mn)
+    elif mx == g:
+        h = 2.0 + (b - r) / (mx - mn)
+    else:
+        h = 4.0 + (r - g) / (mx - mn)
+    h *= 60.0
+    if h < 0:
+        h += 360.0
+    return h
+
+
+def collapse_gradient_ramps(
+    colors: list[tuple[int, int, int]],
+    max_colors: int,
+) -> list[tuple[int, int, int]]:
+    """
+    Crush JPEG/gradient steps while keeping distinct brand hues.
+
+    - Near-grays (low saturation): keep a single darkest ink (banding → one fill)
+    - Same-hue lightness ramps: keep one anchor (highest chroma, else darkest)
+    - Different hues stay separate
+    """
+    if not colors:
+        return [(0, 0, 0)]
+    if len(colors) == 1:
+        return list(colors)
+
+    grays: list[tuple[int, int, int]] = []
+    chroma: list[tuple[int, int, int]] = []
+    for c in colors:
+        if _saturation(c) <= GRAY_SAT_MAX:
+            grays.append(c)
+        else:
+            chroma.append(c)
+
+    out: list[tuple[int, int, int]] = []
+    if grays:
+        out.append(min(grays, key=_lightness))
+
+    chroma_sorted = sorted(chroma, key=_hue_deg)
+    buckets: list[list[tuple[int, int, int]]] = []
+    for c in chroma_sorted:
+        h = _hue_deg(c)
+        placed = False
+        for bucket in buckets:
+            bh = _hue_deg(bucket[0])
+            dh = abs(h - bh)
+            dh = min(dh, 360.0 - dh)
+            if dh <= HUE_BUCKET_DEG:
+                bucket.append(c)
+                placed = True
+                break
+        if not placed:
+            buckets.append([c])
+
+    for bucket in buckets:
+        anchor = max(bucket, key=lambda c: (_saturation(c), -_lightness(c)))
+        out.append(anchor)
+
+    deduped: list[tuple[int, int, int]] = []
+    for c in out:
+        if any(_dist2(c, d) <= 12**2 for d in deduped):
+            continue
+        deduped.append(c)
+    out = deduped
+
+    if len(out) > max_colors:
+        out = sorted(
+            out,
+            key=lambda c: (_saturation(c) > GRAY_SAT_MAX, _saturation(c), -_lightness(c)),
+            reverse=True,
+        )[:max_colors]
+
+    return out or list(colors[:1])
+
+
 def _select_from_pixels(
     ink: np.ndarray,
     max_colors: int,
     colors_mode: str = COLORS_MODE_UP_TO,
 ) -> list[tuple[int, int, int]]:
-    """Mass-aware palette from Nx3 ink pixels."""
+    """Mass-aware palette + gradient ramp collapse."""
     clusters = _build_clusters(ink)
-    return _mass_aware_select(clusters, max_colors, colors_mode=colors_mode)
+    wide_n = max(max_colors * 4, max_colors + 2)
+    wide = _mass_aware_select(clusters, wide_n, colors_mode=COLORS_MODE_UP_TO)
+    collapsed = collapse_gradient_ramps(wide, max_colors=max_colors)
+    if len(collapsed) > max_colors:
+        collapsed = collapsed[:max_colors]
+    return collapsed or [(0, 0, 0)]
 
 
 @dataclass(frozen=True)
