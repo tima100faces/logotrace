@@ -487,7 +487,7 @@ def self_test_sample(
     src_img = load_image(input_path)
     src_rgb = np.asarray(src_img.convert("RGB"))
 
-    svg_text, inks = vectorize_to_svg(
+    svg_text, inks, _eff = vectorize_to_svg(
         input_path=input_path, colors=colors,
         colors_mode=colors_mode, geom=geom,
     )
@@ -668,18 +668,16 @@ def run_matrix(
     colors_mode: str = COLORS_MODE_UP_TO,
     geom: str = "off",
 ) -> int:
-    """Run all upscale variants across all samples, generate comparison matrix."""
+    """Run all variants across all samples, generate comparison matrix."""
     in_dir = Path(input_dir)
-    samples = sorted(in_dir.glob("sample_*.jpg"))
+    samples = sorted(list(in_dir.glob("sample_*.jpg")) + list(in_dir.glob("sample_*.png")))
     if not samples:
-        print("error: no sample_*.jpg files", file=sys.stderr)
+        print("error: no sample_*.jpg/png files", file=sys.stderr)
         return 1
 
-    # Variants: a) vtracer+upscale, b) subpixel no upscale, c) subpixel+upscale
-    variants_config = [
+    # Variants: add new rows here as needed
+    variants_config: list[tuple[str, str, float, str]] = [
         ("vtracer+upscale", "auto", 1.0, "vtracer"),
-        ("subpixel", "off", 1.0, "subpixel"),
-        ("subpix+upscale", "auto", 1.0, "subpixel"),
     ]
     all_results: dict[str, list[dict]] = {}
 
@@ -690,19 +688,15 @@ def run_matrix(
         results = []
         for i, sp in enumerate(samples, 1):
             print(f"  [{i}/{len(samples)}] {sp.name} …", end=" ", flush=True)
-
-            # For 'auto': pipeline handles upscale internally, no pre-compute needed
             if upscale_val == "auto":
                 thresh = 1.0
             else:
                 from src.eval import _upscale_image as _up
                 _, eff = _up(load_image(sp), upscale_val)
                 thresh = thresh_override if thresh_override is not None else eff
-
             r = evaluate_sample(
                 sp, colors=colors, colors_mode=colors_mode, geom=geom,
-                upscale=upscale_val,
-                vtracer_threshold_scale=thresh,
+                upscale=upscale_val, vtracer_threshold_scale=thresh,
                 engine=eng_val,
             )
             results.append(r)
@@ -710,10 +704,11 @@ def run_matrix(
             print(f"IoU={_val(r['iou_mean'])} Ch={_val(r['chamfer'],'.1f')}px {r.get('elapsed','?')}s{eff_str}")
         all_results[var_name] = results
         out_path = Path(output_dir) / f"eval_{var_name.replace('-', '_')}.md"
-        generate_report(results, out_path, version=f"v3-{var_name}")
+        generate_report(results, out_path, version=f"v4-{var_name}")
 
     # Build comparison matrix
     vnames = [vn for vn, _, _, _ in variants_config]
+
     def _vr(var: str, si: int, key: str, fmt_str: str = ".4f") -> str:
         v = all_results[var][si].get(key)
         if v is None:
@@ -721,64 +716,37 @@ def run_matrix(
         return f"{v:{fmt_str}}"
 
     lines = [
-        "# Engine Comparison: VTracer vs Subpixel (Stage 3)",
+        "# Variant Comparison",
         "",
         f"**Samples:** {len(samples)}",
         f"**Date:** 2026-07-21",
         "",
-        "## IoU aw",
-        "",
-        "| Sample | vtracer+upscale | subpixel | subpix+upscale |",
-        "|--------|----------------|----------|---------------|",
     ]
-    for i, sp in enumerate(samples):
-        lines.append(
-            f"| `{sp.stem}` | {_vr('vtracer+upscale',i,'iou_aw')} "
-            f"| {_vr('subpixel',i,'iou_aw')} "
-            f"| {_vr('subpix+upscale',i,'iou_aw')} |"
-        )
+    for metric, key, fmt in [
+        ("IoU aw", "iou_aw", ".4f"),
+        ("Chamfer (px)", "chamfer", ".2f"),
+        ("Nodes", "nodes", ".0f"),
+        ("Time (s)", "elapsed", ".1f"),
+    ]:
+        lines.append(f"## {metric}")
+        lines.append("")
+        header = "| Sample |" + "".join(f" {v} |" for v in vnames)
+        sep = "|--------|" + "".join("--------|" for _ in vnames)
+        lines.append(header)
+        lines.append(sep)
+        for i, sp in enumerate(samples):
+            row = f"| `{sp.stem}` |"
+            for v in vnames:
+                row += f" {_vr(v, i, key, fmt)} |"
+            lines.append(row)
+        lines.append("")
 
-    lines.append("")
-    lines.append("## Chamfer (px)")
-    lines.append("")
-    lines.append("| Sample | vtracer+upscale | subpixel | subpix+upscale |")
-    lines.append("|--------|----------------|----------|---------------|")
-    for i, sp in enumerate(samples):
-        lines.append(
-            f"| `{sp.stem}` | {_vr('vtracer+upscale',i,'chamfer','.2f')} "
-            f"| {_vr('subpixel',i,'chamfer','.2f')} "
-            f"| {_vr('subpix+upscale',i,'chamfer','.2f')} |"
-        )
-
-    lines.append("")
-    lines.append("## Nodes")
-    lines.append("")
-    lines.append("| Sample | vtracer+upscale | subpixel | subpix+upscale |")
-    lines.append("|--------|----------------|----------|---------------|")
-    for i, sp in enumerate(samples):
-        lines.append(
-            f"| `{sp.stem}` | {_vr('vtracer+upscale',i,'nodes','.0f')} "
-            f"| {_vr('subpixel',i,'nodes','.0f')} "
-            f"| {_vr('subpix+upscale',i,'nodes','.0f')} |"
-        )
-
-    lines.append("")
-    lines.append("## Time (s)")
-    lines.append("")
-    lines.append("| Sample | vtracer+upscale | subpixel | subpix+upscale |")
-    lines.append("|--------|----------------|----------|---------------|")
-    for i, sp in enumerate(samples):
-        lines.append(
-            f"| `{sp.stem}` | {_vr('vtracer+upscale',i,'elapsed','.1f')} "
-            f"| {_vr('subpixel',i,'elapsed','.1f')} "
-            f"| {_vr('subpix+upscale',i,'elapsed','.1f')} |"
-        )
-
-    lines.append("")
     lines.append("## Aggregate (mean across samples)")
     lines.append("")
-    lines.append("| Metric | vtracer+upscale | subpixel | subpix+upscale |")
-    lines.append("|--------|----------------|----------|---------------|")
+    agg_header = "| Metric |" + "".join(f" {v} |" for v in vnames)
+    agg_sep = "|--------|" + "".join("--------|" for _ in vnames)
+    lines.append(agg_header)
+    lines.append(agg_sep)
     for metric, key, fmt in [
         ("IoU mean", "iou_mean", ".4f"),
         ("IoU aw", "iou_aw", ".4f"),
@@ -824,9 +792,9 @@ def run_eval(
         print(f"error: input directory not found: {in_dir}", file=sys.stderr)
         return 1
 
-    samples = sorted(in_dir.glob("sample_*.jpg"))
+    samples = sorted(list(in_dir.glob("sample_*.jpg")) + list(in_dir.glob("sample_*.png")))
     if not samples:
-        print(f"error: no sample_*.jpg files in {in_dir}", file=sys.stderr)
+        print(f"error: no sample_*.jpg/png files in {in_dir}", file=sys.stderr)
         return 1
 
     diffs_dir = Path("output/eval_diffs") if dump_diffs else None
@@ -862,7 +830,7 @@ if __name__ == "__main__":
     ap.add_argument("--geom", default="off", choices=["off", "basic", "strict"])
     ap.add_argument("--upscale", default="off", choices=["off", "2x", "4x", "4x-smooth"])
     ap.add_argument("--dump-diffs", action="store_true", help="Save XOR diff PNGs for low-IoU masks")
-    ap.add_argument("--matrix", action="store_true", help="Run all upscale variants and generate comparison matrix")
+    ap.add_argument("--matrix", action="store_true", help="Run all variants and generate comparison matrix")
 
     args = ap.parse_args()
 

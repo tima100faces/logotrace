@@ -51,7 +51,7 @@ def main(
         "vtracer",
         "--engine",
         "-e",
-        help="Trace engine: vtracer (default) | subpixel (experimental)",
+        help="Trace engine: vtracer (default)",
     ),
 ) -> None:
     """Convert a flat logo image to RGB vector PDF (SVG optional)."""
@@ -68,8 +68,8 @@ def main(
         typer.secho("error: --geom must be off|basic|strict", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
     eng = engine.lower().strip()
-    if eng not in ("vtracer", "subpixel"):
-        typer.secho("error: --engine must be vtracer|subpixel", fg=typer.colors.RED, err=True)
+    if eng not in ("vtracer",):
+        typer.secho("error: --engine must be vtracer", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
     out = output

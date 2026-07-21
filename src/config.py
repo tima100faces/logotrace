@@ -17,4 +17,3 @@ VTRACER_MODE = "spline"
 VTRACER_HIERARCHICAL = "stacked"
 # Trace engine
 DEFAULT_ENGINE = "vtracer"
-ENGINES = ("vtracer", "subpixel")

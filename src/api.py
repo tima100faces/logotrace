@@ -57,8 +57,8 @@ async def vectorize(
     if gl not in (GEOM_OFF, GEOM_BASIC, GEOM_STRICT):
         raise HTTPException(status_code=400, detail="geom must be off|basic|strict")
     eng = engine.lower().strip()
-    if eng not in ("vtracer", "subpixel"):
-        raise HTTPException(status_code=400, detail="engine must be vtracer|subpixel")
+    if eng not in ("vtracer",):
+        raise HTTPException(status_code=400, detail="engine must be vtracer")
 
     raw = colors if (colors is not None and str(colors).strip() != "") else palette
     try:

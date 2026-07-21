@@ -98,8 +98,8 @@ def vectorize_to_svg(
     """
     colors = _check_colors(colors)
     colors_mode = _check_colors_mode(colors_mode)
-    if engine not in ("vtracer", "subpixel"):
-        raise VectorizeError("engine must be 'vtracer' or 'subpixel'")
+    if engine not in ("vtracer",):
+        raise VectorizeError("engine must be 'vtracer'")
     if input_path is None and data is None:
         raise VectorizeError("input_path or data required")
 
@@ -141,20 +141,6 @@ def vectorize_to_svg(
             _path, palette, _mode = prepare_for_trace(
                 source, colors, prepared, colors_mode=colors_mode
             )
-
-            if engine == "subpixel":
-                # Subpixel contour tracer: works from original image + palette
-                from src.tracer_subpixel import subpixel_trace
-
-                bg = None
-                if "paper" in (_mode or ""):
-                    from src.colors import estimate_background
-                    bg = estimate_background(src_img)
-                svg_raw = subpixel_trace(src_img, list(palette), bg_color=bg)
-                subpixel_svg = tmpdir / "subpixel.svg"
-                subpixel_svg.write_text(svg_raw, encoding="utf-8")
-                svg_text = finalize_svg(subpixel_svg, geom=geom)
-                return svg_text, palette, eff
 
             # 2 ─ VTracer (scale pixel-unit thresholds)
             if eff > UPSCALE_MIN_EFFECTIVE:

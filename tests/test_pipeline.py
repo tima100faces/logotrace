@@ -149,7 +149,7 @@ def test_geom_basic_reduces_nodes():
 
 
 def test_vectorize_svg_string(tiny_logo: Path):
-    svg, pal = vectorize_to_svg(input_path=tiny_logo, colors=2, geom=GEOM_OFF)
+    svg, pal, _eff = vectorize_to_svg(input_path=tiny_logo, colors=2, geom=GEOM_OFF)
     assert "<svg" in svg.lower()
     assert "</svg>" in svg.lower()
     assert len(pal) >= 1
@@ -163,7 +163,7 @@ def test_vectorize_file_pdf(tiny_logo: Path, tmp_path: Path):
 
 
 def test_vectorize_bytes_pdf(tiny_logo: Path):
-    data = vectorize_bytes(tiny_logo.read_bytes(), colors=2, fmt="pdf", geom=GEOM_OFF)
+    data, _eff = vectorize_bytes(tiny_logo.read_bytes(), colors=2, fmt="pdf", geom=GEOM_OFF)
     assert data.startswith(b"%PDF")
 
 
