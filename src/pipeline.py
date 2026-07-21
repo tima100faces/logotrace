@@ -14,6 +14,7 @@ from src.pdf_export import PdfError, svg_to_pdf_bytes
 from src.postprocess import finalize_svg
 from src.preprocess import PreprocessError, prepare_for_trace
 from src.tracer_vtracer import TracerError, run_vtracer
+from src.verify import VerifyError, verify_vector_output
 
 
 class VectorizeError(RuntimeError):
@@ -106,13 +107,17 @@ def vectorize_file(
 
     if fmt == "svg":
         out.write_text(svg_text, encoding="utf-8")
-        return out
+    else:
+        try:
+            pdf = svg_to_pdf_bytes(svg_text)
+        except PdfError as exc:
+            raise VectorizeError(str(exc)) from exc
+        out.write_bytes(pdf)
 
     try:
-        pdf = svg_to_pdf_bytes(svg_text)
-    except PdfError as exc:
-        raise VectorizeError(str(exc)) from exc
-    out.write_bytes(pdf)
+        verify_vector_output(out, source_image=input_path)
+    except VerifyError as exc:
+        raise VectorizeError(f"output failed self-check: {exc}") from exc
     return out
 
 
@@ -140,8 +145,24 @@ def vectorize_bytes(
         geom=geom,
     )
     if fmt == "svg":
-        return svg_text.encode("utf-8")
+        payload = svg_text.encode("utf-8")
+    else:
+        try:
+            payload = svg_to_pdf_bytes(svg_text)
+        except PdfError as exc:
+            raise VectorizeError(str(exc)) from exc
+
+    # self-check via temp file
+    import tempfile
+
+    suffix = ".pdf" if fmt == "pdf" else ".svg"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+        tmp_path = Path(tf.name)
+        tf.write(payload)
     try:
-        return svg_to_pdf_bytes(svg_text)
-    except PdfError as exc:
-        raise VectorizeError(str(exc)) from exc
+        verify_vector_output(tmp_path)
+    except VerifyError as exc:
+        raise VectorizeError(f"output failed self-check: {exc}") from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    return payload

@@ -247,9 +247,44 @@ def _fit_circle(pts: list[tuple[float, float]]) -> tuple[float, float, float] | 
     return cx, cy, r
 
 
+def _simplify_poly(
+    points: list[tuple[float, float]],
+    *,
+    closed: bool,
+    epsilon: float = RDP_EPSILON,
+) -> list[tuple[float, float]]:
+    """RDP-safe simplify; handles closed rings (start==end) which break naive RDP."""
+    if len(points) < 3:
+        return points
+
+    pts = list(points)
+    is_closed = closed or (
+        abs(pts[0][0] - pts[-1][0]) < 1e-6 and abs(pts[0][1] - pts[-1][1]) < 1e-6
+    )
+    if is_closed and len(pts) >= 2:
+        pts = pts[:-1]
+
+    if len(pts) < 3:
+        out = pts + ([pts[0]] if is_closed and pts else [])
+        return out
+
+    # Split ring at point farthest from start so RDP segments have real length
+    ax, ay = pts[0]
+    i_far = max(
+        range(1, len(pts)),
+        key=lambda j: (pts[j][0] - ax) ** 2 + (pts[j][1] - ay) ** 2,
+    )
+    left = _rdp(pts[: i_far + 1], epsilon)
+    right = _rdp(pts[i_far:] + [pts[0]], epsilon)
+    # stitch without duplicating joint/start
+    merged = left[:-1] + right[:-1]
+    if is_closed and merged:
+        merged.append(merged[0])
+    return _collapse_collinear(merged)
+
+
 def _poly_to_d(points: list[tuple[float, float]], closed: bool, level: str) -> str:
-    pts = _rdp(points, RDP_EPSILON)
-    pts = _collapse_collinear(pts)
+    pts = _simplify_poly(points, closed=closed, epsilon=RDP_EPSILON)
 
     if level == GEOM_STRICT and len(pts) >= ARC_MIN_POINTS:
         body = pts[:-1] if closed and len(pts) > 2 else pts
@@ -262,6 +297,9 @@ def _poly_to_d(points: list[tuple[float, float]], closed: bool, level: str) -> s
                 f"A {r:.2f} {r:.2f} 0 1 1 {cx - r:.2f} {cy:.2f} "
                 f"A {r:.2f} {r:.2f} 0 1 1 {x0:.2f} {y0:.2f} Z"
             )
+
+    if len(pts) < 2:
+        return "M 0 0 Z"
 
     parts = [f"M {pts[0][0]:.2f} {pts[0][1]:.2f}"]
     for x, y in pts[1:]:
