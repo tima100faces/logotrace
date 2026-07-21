@@ -114,13 +114,14 @@ def test_resolve_palette_policy_auto_and_manual():
 
 
 def test_sample_05_exact_two_keeps_dual_gray():
-    """Manual exact 2 must keep black + mid-gray (no gradient crush)."""
+    """Manual exact 2 → black + mid-gray. Auto up_to keeps bimodal grays (≥2)."""
     src = SAMPLES / "sample_05.jpg"
     if not src.is_file():
         pytest.skip("sample_05 missing")
     auto = analyze_palette(Image.open(src), 4, colors_mode=COLORS_MODE_UP_TO).colors
     exact = analyze_palette(Image.open(src), 2, colors_mode=COLORS_MODE_EXACT).colors
-    assert len(auto) == 1  # crush → mono black
+    # Auto with bimodal guard now keeps both gray masses (skip crush)
+    assert len(auto) >= 2, f"auto should detect bimodal, got {auto}"
     assert len(exact) >= 2
     lights = sorted(sum(c) / 3 for c in exact)
     assert lights[0] < 80  # dark
