@@ -1,36 +1,39 @@
-# Spec: LogoTrace MVP
+# Spec: LogoTrace
 
 ## Objective
 
-Build a local tool that converts **flat logo rasters** (1-3 solid colors) into **clean flat SVG** suitable for edit/print/cut workflows.
+Local tool: **flat logo rasters (mostly JPEG)** → **RGB vector PDF** for print/Illustrator workflow.
 
-**User:** Tim (operator / product). Later maybe API consumers.  
-**Why:** Vectorizer.AI is strong but paid/heavy; for flat logos OSS pipeline is enough and controllable.
+Not a Vectorizer.AI clone. Strength = brand-color fidelity + clean enough geometry for flat 1–N color marks.
+
+**User:** Tim  
+**Why:** Paid AI tracers overkill for flat logos; need controllable local pipeline + PDF out.
 
 ### User stories
 
-1. As an operator, I drop a 2-color PNG logo and get an SVG with two flat fills and editable paths.
-2. As a developer, I `POST` an image to `/vectorize` and receive `image/svg+xml`.
-3. As an operator, I can set `--colors N` as **max palette size** (up to N, not always exactly N).
-4. As an operator, if the source has transparency, the SVG keeps transparent background (no forced white matte).
+1. Drop a JPEG logo scan → get RGB PDF with fills close to original brand colors.
+2. `POST /vectorize` with `format=pdf` → PDF bytes.
+3. Cap ink colors with `--colors N` (up to N; default 4).
+4. If PNG has real alpha → keep transparency through SVG stage (PDF may flatten per renderer).
 
-### Success criteria (MVP done when)
+### Success criteria (current MVP — largely met 2026-07-21)
 
-- [ ] CLI converts PNG/JPG/WebP → SVG for samples in `samples/`
-- [ ] HTTP `GET /health` → 200
-- [ ] HTTP `POST /vectorize` accepts image, returns SVG
-- [ ] `--colors N` means **at most N** colors (default **4**)
-- [ ] Transparent source → transparent SVG background (do not flatten onto white)
-- [ ] Output is flat fills (no intentional gradients)
-- [ ] At least one automated test with a tiny fixture image
-- [ ] README documents install + usage
-- [ ] Side-by-side notes on 3+ real logos after user uploads samples (manual QA)
+- [x] CLI: JPEG/PNG/WebP → **PDF** (default)
+- [x] HTTP `GET /health` → 200
+- [x] HTTP `POST /vectorize` → PDF by default (`format=svg` optional)
+- [x] `--colors N` = max ink colors (default **4**)
+- [x] Paper JPEG: bg handled; full-bleed brand field kept (`paper` / `fullbleed` modes)
+- [x] Brand-color extract + remap before trace
+- [x] pytest green
+- [x] README + QA notes on real samples
+- [x] User visual score on problem set ≈ **4.0–4.5 / 5** (2026-07-21)
 
-### Post-MVP (not blocking MVP)
+### Post-MVP
 
-- Web UI (after tracer quality is validated on real samples)
-- PDF export (vector PDF from SVG)
-- Tune auto-detect heuristics for palette size
+- Web UI
+- Tighter mono path (sample_08 gray banding)
+- Optional CMYK (explicitly not required — Illustrator downstream)
+- Auto-N palette size
 
 ---
 
@@ -40,34 +43,25 @@ Build a local tool that converts **flat logo rasters** (1-3 solid colors) into *
 |-------|--------|
 | Language | Python 3.11 |
 | API | FastAPI + uvicorn |
-| CLI | Typer (or argparse if lighter) |
-| Preprocess | Pillow |
-| Tracer | VTracer CLI (primary) |
-| Optional tracer | Potrace (mono path, spike-dependent) |
-| SVG optimize | svgo and/or Python simplify |
+| CLI | Typer |
+| Color | `src/colors.py` (numpy) — paper/fullbleed |
+| Preprocess | Pillow + brand remap |
+| Tracer | VTracer 0.6.4 (`bin/vtracer`) |
+| PDF | rsvg-convert (preferred) / cairosvg |
 | Tests | pytest |
 | License | GPL-3.0 |
 
 ---
 
-## Commands (target)
+## Commands
 
 ```bash
-# setup
 cd /root/logotrace
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-# ensure vtracer on PATH (cargo install vtracer / package)
-
-# CLI
-python -m src.cli samples/logo.png -o output/logo.svg --colors 2
-
-# API
-uvicorn src.api:app --host 127.0.0.1 --port 8095
-curl -s http://127.0.0.1:8095/health
-curl -s -F "file=@samples/logo.png" -F "colors=2" http://127.0.0.1:8095/vectorize -o out.svg
-
-# tests
+source .venv/bin/activate
+PYTHONPATH=/root/logotrace python -m src.cli samples/sample_06.jpg -o output/sample_06.pdf
+PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.svg --format svg   # debug
+PYTHONPATH=/root/logotrace uvicorn src.api:app --host 127.0.0.1 --port 8095
+curl -s -F file=@logo.jpg -F colors=4 -F format=pdf http://127.0.0.1:8095/vectorize -o out.pdf
 pytest -q
 ```
 
@@ -78,115 +72,50 @@ pytest -q
 ```
 /root/logotrace/
   README.md
-  LICENSE
-  NOTICE                  # third-party licenses
-  .gitignore
-  requirements.txt
-  pyproject.toml          # optional
-  docs/
-    SPEC.md               # this file
-    RESEARCH.md
-    DECISIONS.md
-    plans/
-      2026-07-21-mvp-implementation.md
-  samples/                # user logos (gitkeep; binaries optional)
+  LICENSE, NOTICE
+  bin/vtracer
+  docs/   SPEC, RESEARCH, DECISIONS, QA-NOTES, plans/
+  samples/
+  output/          # gitignored PDFs/SVGs
   src/
-    __init__.py
-    cli.py                # CLI entry
-    api.py                # FastAPI app
-    pipeline.py           # preprocess → trace → post
+    colors.py      # palette + remap
     preprocess.py
     tracer_vtracer.py
-    postprocess.py
-    config.py
+    pdf_export.py
+    pipeline.py
+    cli.py
+    api.py
   tests/
-    test_pipeline.py
-    fixtures/
-      tiny_logo.png
-  output/                 # gitignored runtime outs
 ```
 
 ---
 
-## Code Style
+## Decisions from Tim (locked)
 
-- Python 3.11, type hints on public functions
-- snake_case modules/functions, PascalCase only if classes needed
-- No silent failures: raise clear errors (unsupported format, tracer missing)
-- Subprocess timeouts on tracer calls
-- Example:
+1. Interfaces: CLI+API now; **web UI later**
+2. Colors: **up to N**, default **4**
+3. Alpha: preserve when present; JPEG is main input
+4. Output: **PDF only as product deliverable**; SVG debug
+5. PDF color space: **RGB** (Illustrator for further work)
+6. Samples may live in repo
 
-```python
-def vectorize(image_bytes: bytes, colors: int = 2) -> str:
-    """Return SVG string. colors must be 1..3."""
-    ...
-```
-
----
-
-## Testing Strategy
-
-- **Unit:** preprocess palette count; CLI arg validation
-- **Integration:** fixture PNG → SVG contains `<svg` and non-empty paths
-- **Manual:** user samples after upload — visual check + node-count note
-- Framework: pytest
-- Do not require GPU
+See `docs/DECISIONS.md` ADR-1…12 and `docs/QA-NOTES.md` round 2.
 
 ---
 
 ## Boundaries
 
-**Always:**
-- Run pytest before claiming done
-- Keep scope to flat 1-3 color logos
-- Document tracer binary dependency
-- GPL-3.0 headers / LICENSE present
-
-**Ask first:**
-- Adding Potrace as hard dependency
-- Exposing API publicly (auth, rate limit)
-- Calling external paid vectorizer API
-- systemd unit / nginx vhost
-- Changing license
-
-**Never:**
-- Commit secrets or large binary dumps of client logos without ask
-- Implement photo/gradient ML pipeline in MVP
-- Build web UI in MVP
-- Use CairoSVG as tracer
+**Always:** pytest before "done"; document tracer binary; JPEG-first assumptions in QA  
+**Ask first:** public bind, systemd, CMYK, paid API fallback, remote git  
+**Never:** treat CairoSVG as raster→vector tracer; ship web UI without quality OK  
 
 ---
 
-## Non-goals (MVP)
+## Status snapshot
 
-- Match Vectorizer.AI on complex art
-- DXF/EPS export (SVG only first)
-- Auth, multi-user, billing
-- Auto circle/rect shape snapping (nice-to-have later)
-
----
-
-## Decisions from Tim (2026-07-21)
-
-1. **Interfaces:** MVP — CLI + API both fine for tests. **Web UI after** quality tests. Not in MVP.
-2. **Colors:** **up to N**, not forced exact N. Exact default N and auto-detect still open (decision forks later on samples).
-3. **Transparency:** if alpha present → **keep transparent**, do not paste on white.
-4. **PDF:** wanted eventually; **not required in MVP** (SVG first).
-
-## Still open (minor — can resolve on samples)
-
-1. Default `N` for `--colors` when user omits flag → **4** (locked)
-2. Auto-detect palette size vs always use default N (later)
-3. Manual QA bar after Tim opens `output/*.svg`
-4. Public bind vs localhost-only → **127.0.0.1** for now
-5. Samples may be committed (no secrets)
-
----
-
-## Assumptions (correct me if wrong)
-
-1. Runtime is this VPS (Linux), local process OK
-2. English code/docs filenames; Russian OK in chat only
-3. No remote GitHub until you say push
-4. Samples you upload may be used as test fixtures inside this repo unless you say private-only
-5. Primary deliverable of MVP is **SVG**; PDF is post-MVP conversion from SVG
+| Item | State |
+|------|--------|
+| Repo | `/root/logotrace` local git `main` |
+| Latest feature commit | brand-color remap + PDF default |
+| API | `127.0.0.1:8095` |
+| Quality (user) | ~4–4.5/5 after color fix |

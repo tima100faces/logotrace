@@ -28,8 +28,8 @@
 - `pytest -q` → 12 passed
 - API default `format=pdf` → `%PDF`
 
-## Still open / next knobs
+## User score (2026-07-21)
 
-- sample_08 gray banding → optional `--colors 2` or bw path for near-mono marks
-- sample_02 mid greens in palette (antialias) — could tighten merge threshold
-- CMYK not planned (Illustrator downstream)
+After brand-color remap + PDF default: user reports **radical improvement**, estimate in the **4.0–4.5 / 5** band (exact score not pinned).
+
+Problem-set recheck: sample_06/07 multi-color restored; sample_02/08 hue better.
