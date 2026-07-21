@@ -217,6 +217,64 @@ def test_single_ink_paper_mode_not_perfect():
 
 
 # ---------------------------------------------------------------------------
+# Area-weighted IoU + per-mask detail
+# ---------------------------------------------------------------------------
+
+def test_per_mask_area_and_iou_aw():
+    """Per-mask area % and area-weighted IoU are computed correctly."""
+    src = SAMPLES / "sample_02.jpg"
+    if not src.is_file():
+        pytest.skip("sample_02 missing")
+    r = evaluate_sample(src, dump_diffs_dir=None)
+    masks = r.get("per_mask", [])
+    assert len(masks) >= 2, f"should have ink+bg masks, got {masks}"
+
+    # Area percentages should sum to ~100%
+    total_area = sum(m["area_pct"] for m in masks)
+    assert 99.0 < total_area < 101.0, f"area sum {total_area}%"
+
+    # Area-weighted IoU should differ from mean when areas are skewed
+    iou_aw = r.get("iou_aw")
+    iou_mean = r.get("iou_mean")
+    assert iou_aw is not None
+    # For paper mode: bg has large area, small masks drag mean down
+    if r["mode"] == "paper":
+        assert iou_aw > iou_mean, f"aw={iou_aw} should be > mean={iou_mean} (bg dominates)"
+
+
+def test_upscale_variants_run():
+    """Each upscale variant produces results without crashing."""
+    src = SAMPLES / "sample_01.jpg"
+    if not src.is_file():
+        pytest.skip("sample_01 missing")
+    for variant in ["off", "2x", "4x", "4x-smooth"]:
+        r = evaluate_sample(src, upscale=variant)
+        assert r["render_ok"], f"{variant} render failed"
+        assert r["iou_mean"] is not None, f"{variant} IoU is None"
+        assert r["elapsed"] is not None
+
+
+def test_upscale_svg_scaling():
+    """_wrap_svg_scaled correctly wraps SVG with transform and fixes viewport."""
+    from src.eval import _wrap_svg_scaled
+
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><path d="M 10 10"/></svg>'
+    scaled = _wrap_svg_scaled(svg, 4, 100, 100)
+    assert 'scale(0.25' in scaled
+    assert 'width="100"' in scaled
+    assert 'height="100"' in scaled
+    assert '<g transform=' in scaled
+    assert '</g>' in scaled
+    assert '<path' in scaled
+
+
+def test_upscale_noop():
+    """off variant returns same result as no upscale."""
+    from src.eval import _wrap_svg_scaled
+    svg = "<svg><path/></svg>"
+    assert _wrap_svg_scaled(svg, 1, 100, 100) == svg
+
+# ---------------------------------------------------------------------------
 # Regression: self-test on every sample
 # ---------------------------------------------------------------------------
 
