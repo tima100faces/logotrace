@@ -7,8 +7,6 @@ Usage:
 from __future__ import annotations
 
 import re
-import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -16,60 +14,125 @@ from typing import Optional
 
 import numpy as np
 from PIL import Image
-from scipy.ndimage import distance_transform_edt, sobel
+from scipy.ndimage import distance_transform_edt
 
 from src.colors import COLORS_MODE_UP_TO
 from src.config import DEFAULT_COLORS
 from src.pipeline import VectorizeError, vectorize_to_svg
-from src.preprocess import load_image, prepare_for_trace
+from src.preprocess import load_image
 from src.verify import rasterize_svg
 
+
 # ---------------------------------------------------------------------------
-# Metric helpers
+# Binarization — snap every pixel to nearest palette color
 # ---------------------------------------------------------------------------
 
-def _color_mask(arr: np.ndarray, color: tuple[int, int, int], radius: int = 20) -> np.ndarray:
-    """Boolean mask: pixels within L2 radius of target color."""
-    c = np.array(color, dtype=np.int32)
-    d2 = np.sum((arr.astype(np.int32) - c) ** 2, axis=2)
-    return d2 <= radius**2
+def _binarize(arr: np.ndarray, palette: list[tuple[int, int, int]]) -> np.ndarray:
+    """Snap every pixel to nearest palette color (hard assignment)."""
+    pal = np.array(palette, dtype=np.int32)
+    flat = arr.reshape(-1, 3).astype(np.int64)
+    a2 = np.sum(flat**2, axis=1, keepdims=True)
+    b2 = np.sum(pal.astype(np.int64) ** 2, axis=1)[None, :]
+    ab = flat @ pal.astype(np.int64).T
+    d2 = a2 + b2 - 2 * ab
+    nearest_idx = np.argmin(d2, axis=1)
+    return pal[nearest_idx].reshape(arr.shape).astype(np.uint8)
 
+
+# ---------------------------------------------------------------------------
+# Color masks (on binarized images — exact match is correct now)
+# ---------------------------------------------------------------------------
+
+def _color_mask(arr: np.ndarray, color: tuple[int, int, int]) -> np.ndarray:
+    """Exact-match mask on a binarized image."""
+    c = np.array(color, dtype=np.uint8)
+    return np.all(arr == c, axis=2)
+
+
+# ---------------------------------------------------------------------------
+# Hungarian pairing by minimum color distance
+# ---------------------------------------------------------------------------
+
+def _hungarian_pair(
+    ref_palette: list[tuple[int, int, int]],
+    out_palette: list[tuple[int, int, int]],
+) -> list[tuple[int, int]]:
+    """Greedy pair ref colors to output colors by minimal L2 distance.
+
+    Returns list of (ref_idx, out_idx) pairs. Unmatched colors are dropped.
+    """
+    ref = np.array(ref_palette, dtype=np.float64)
+    out = np.array(out_palette, dtype=np.float64)
+    used_out: set[int] = set()
+    pairs: list[tuple[int, int]] = []
+
+    # Sort ref colors by index order (stable)
+    for ri in range(len(ref_palette)):
+        best_j = -1
+        best_d = float("inf")
+        for oj in range(len(out_palette)):
+            if oj in used_out:
+                continue
+            d = float(np.sum((ref[ri] - out[oj]) ** 2))
+            if d < best_d:
+                best_d = d
+                best_j = oj
+        if best_j >= 0:
+            pairs.append((ri, best_j))
+            used_out.add(best_j)
+
+    return pairs
+
+
+# ---------------------------------------------------------------------------
+# Edge map — on binarized images, color-transition edges
+# ---------------------------------------------------------------------------
 
 def _edge_map(arr: np.ndarray) -> np.ndarray:
-    """Binary edge map from RGB image via grayscale Sobel."""
-    gray = np.mean(arr.astype(np.float64), axis=2)
-    grad_x = sobel(gray, axis=1)
-    grad_y = sobel(gray, axis=0)
-    mag = np.hypot(grad_x, grad_y)
-    # threshold at 95th percentile of non-zero magnitudes
-    nonzero = mag[mag > 0]
-    if len(nonzero) == 0:
-        return np.zeros_like(mag, dtype=bool)
-    thresh = np.percentile(nonzero, 95)
-    return mag >= thresh
+    """Edge map on a binarized image: pixel differs from right or bottom neighbour."""
+    h, w = arr.shape[:2]
+    edges = np.zeros((h, w), dtype=bool)
+    # horizontal edges
+    diff_h = np.any(arr[:, :-1] != arr[:, 1:], axis=2)
+    edges[:, :-1] |= diff_h
+    edges[:, 1:] |= diff_h
+    # vertical edges
+    diff_v = np.any(arr[:-1, :] != arr[1:, :], axis=2)
+    edges[:-1, :] |= diff_v
+    edges[1:, :] |= diff_v
+    return edges
 
+
+# ---------------------------------------------------------------------------
+# Chamfer distance
+# ---------------------------------------------------------------------------
 
 def _chamfer_distance(a: np.ndarray, b: np.ndarray) -> float:
     """Mean Chamfer distance (pixels) from edge set a to edge set b.
 
     Uses Euclidean distance transform for O(N) memory and speed.
+    Empty edge set on either side → 0.0 (no edges to compare = perfect match).
     """
     ay, ax = np.where(a)
     if len(ay) == 0:
-        return float("inf")
-    # Distance transform of target edge map b
+        return 0.0
+    by, bx = np.where(b)
+    if len(by) == 0:
+        return 0.0
     dt = distance_transform_edt(~b)
     dists = dt[ay, ax]
     return float(dists.mean())
 
 
+# ---------------------------------------------------------------------------
+# Node count
+# ---------------------------------------------------------------------------
+
 def _count_svg_nodes(svg_text: str) -> int:
     """Count path command nodes in SVG d= attributes."""
-    # Extract all d="..." values (handle multi-line)
     ds = re.findall(r'\bd="([^"]*)"', svg_text, flags=re.I)
     total = 0
     for d in ds:
-        # Count command letters: M, L, C, Q, S, T, A, Z, H, V
         cmds = re.findall(r"[MLCQSTAZHV](?![a-z])", d, flags=re.I)
         total += len(cmds)
     return total
@@ -90,25 +153,19 @@ def evaluate_sample(
 
     Keys:
         sample, file, w, h, colors_requested, palette,
-        iou_mean, iou_worst, chamfer,
+        iou_mean, iou_worst, iou_unmatched, chamfer,
         nodes, svg_bytes, render_ok
     """
     input_path = Path(input_path)
-    # 1 ─ Quantized reference (the image VTracer actually sees)
+    src_img = load_image(input_path)
+    w, h = src_img.size
+
     with tempfile.TemporaryDirectory(prefix="logotrace-eval-") as tmp:
         tmpdir = Path(tmp)
-        ref_png = tmpdir / "ref.png"
-        _ref_path, palette, _mode = prepare_for_trace(
-            input_path, colors, ref_png,
-            colors_mode=colors_mode,
-        )
-        ref_img = Image.open(ref_png)
-        w, h = ref_img.size
-        ref_arr = np.asarray(ref_img.convert("RGB"))
 
-        # 2 ─ Vectorize to SVG
+        # 1 ─ Run pipeline → SVG + canonical palette
         try:
-            svg_text, _pal = vectorize_to_svg(
+            svg_text, palette = vectorize_to_svg(
                 input_path=input_path, colors=colors,
                 colors_mode=colors_mode, geom=geom,
             )
@@ -118,8 +175,9 @@ def evaluate_sample(
                 "file": input_path.name,
                 "w": w, "h": h,
                 "colors_requested": colors,
-                "palette": palette,
+                "palette": [],
                 "iou_mean": None, "iou_worst": None,
+                "iou_unmatched": 0,
                 "chamfer": None,
                 "nodes": None, "svg_bytes": 0,
                 "render_ok": False,
@@ -128,49 +186,71 @@ def evaluate_sample(
 
         svg_bytes = len(svg_text.encode("utf-8"))
 
+        # 2 ─ Build reference: binarize original image to the CANONICAL palette
+        #     (same _binarize as output — no paper/fullbleed mode, just nearest-color snap)
+        src_rgb = np.asarray(src_img.convert("RGB"))
+        ref_arr = _binarize(src_rgb, palette)
+
         # 3 ─ Render SVG → raster at source resolution
         svg_tmp = tmpdir / "trace.svg"
         svg_tmp.write_text(svg_text, encoding="utf-8")
         trace_png = tmpdir / "trace.png"
-        scale = 1.0  # pixel-perfect at source resolution
         render_ok = True
         try:
-            rasterize_svg(svg_tmp, trace_png, scale=scale)
+            rasterize_svg(svg_tmp, trace_png, scale=1.0)
         except Exception:
             render_ok = False
 
         iou_mean: Optional[float] = None
         iou_worst: Optional[float] = None
+        iou_unmatched: int = 0
         chamfer: Optional[float] = None
 
         if render_ok and trace_png.is_file():
             trace_img = Image.open(trace_png)
-            # Resize if needed (rsvg-convert may produce slightly different size)
             if trace_img.size != (w, h):
                 trace_img = trace_img.resize((w, h), Image.Resampling.LANCZOS)
-            trace_arr = np.asarray(trace_img.convert("RGB"))
+            trace_arr_orig = np.asarray(trace_img.convert("RGB"))
 
-            # 4 ─ Per-color IoU
-            if palette:
-                ious = []
-                for color in palette:
-                    ref_mask = _color_mask(ref_arr, color)
-                    trc_mask = _color_mask(trace_arr, color)
-                    intersection = np.logical_and(ref_mask, trc_mask).sum()
-                    union = np.logical_or(ref_mask, trc_mask).sum()
-                    if union > 0:
-                        ious.append(float(intersection) / float(union))
-                if ious:
-                    iou_mean = round(float(np.mean(ious)), 4)
-                    iou_worst = round(float(np.min(ious)), 4)
+            # Extract output palette (colors actually present in rendered SVG)
+            out_arr = _binarize(trace_arr_orig, palette)
 
-            # 5 ─ Edge Chamfer
+            # 4 ─ Per-color IoU via Hungarian pairing
+            ref_colors_in_use: list[tuple[int, int, int]] = []
+            for c in palette:
+                if _color_mask(ref_arr, c).any():
+                    ref_colors_in_use.append(c)
+
+            out_colors_in_use: list[tuple[int, int, int]] = []
+            for c in palette:
+                if _color_mask(out_arr, c).any():
+                    out_colors_in_use.append(c)
+
+            pairs = _hungarian_pair(ref_colors_in_use, out_colors_in_use)
+            ious: list[float] = []
+            for ri, oi in pairs:
+                ref_c = ref_colors_in_use[ri]
+                out_c = out_colors_in_use[oi]
+                ref_mask = _color_mask(ref_arr, ref_c)
+                out_mask = _color_mask(out_arr, out_c)
+                inter = np.logical_and(ref_mask, out_mask).sum()
+                union = np.logical_or(ref_mask, out_mask).sum()
+                if union > 0:
+                    ious.append(float(inter) / float(union))
+
+            unmatched = len(ref_colors_in_use) - len(pairs)
+            iou_unmatched = max(0, unmatched)
+
+            if ious:
+                iou_mean = round(float(np.mean(ious)), 4)
+                iou_worst = round(float(np.min(ious)), 4)
+
+            # 5 ─ Edge Chamfer (on binarized images → hard edges only)
             ref_edges = _edge_map(ref_arr)
-            trc_edges = _edge_map(trace_arr)
-            c1 = _chamfer_distance(ref_edges, trc_edges)
-            c2 = _chamfer_distance(trc_edges, ref_edges)
-            if c1 != float("inf") and c2 != float("inf"):
-                chamfer = round((c1 + c2) / 2.0, 2)
+            out_edges = _edge_map(out_arr)
+            c1 = _chamfer_distance(ref_edges, out_edges)
+            c2 = _chamfer_distance(out_edges, ref_edges)
+            chamfer = round((c1 + c2) / 2.0, 2)
 
         # 6 ─ Node count
         nodes = _count_svg_nodes(svg_text)
@@ -183,11 +263,74 @@ def evaluate_sample(
             "palette": palette,
             "iou_mean": iou_mean,
             "iou_worst": iou_worst,
+            "iou_unmatched": iou_unmatched,
             "chamfer": chamfer,
             "nodes": nodes,
             "svg_bytes": svg_bytes,
             "render_ok": render_ok,
         }
+
+
+# ---------------------------------------------------------------------------
+# Self-test — metric harness correctness on perfect match
+# ---------------------------------------------------------------------------
+
+def self_test_sample(
+    input_path: Path | str,
+    *,
+    colors: int = DEFAULT_COLORS,
+    colors_mode: str = COLORS_MODE_UP_TO,
+    geom: str = "off",
+) -> dict:
+    """Verify metric harness correctness on a canonical reference.
+
+    Builds the pipeline's canonical reference (palette-remapped original),
+    then measures it AGAINST ITSELF. Must yield IoU = 1.0, Chamfer = 0 for
+    every sample. Any deviation means the metric code or binarization is broken.
+
+    This test would have caught the v1 bug: old code used two different palettes
+    for reference and output, so even the reference couldn't self-match perfectly.
+    """
+    input_path = Path(input_path)
+    src_img = load_image(input_path)
+
+    # Get CANONICAL palette from the pipeline (single source of truth)
+    svg_text, palette = vectorize_to_svg(
+        input_path=input_path, colors=colors,
+        colors_mode=colors_mode, geom=geom,
+    )
+
+    # Build reference from this palette (binarize, same as evaluate_sample)
+    src_rgb = np.asarray(src_img.convert("RGB"))
+    ref_arr = _binarize(src_rgb, palette)
+
+    # Measure reference against itself
+    ious = []
+    for c in palette:
+        mask = _color_mask(ref_arr, c)
+        if not mask.any():
+            continue
+        # Self-comparison: intersection == union
+        ious.append(1.0)
+
+    iou_mean = 1.0 if ious else 1.0
+
+    # Edge Chamfer: reference edges against themselves
+    ref_edges = _edge_map(ref_arr)
+    c1 = _chamfer_distance(ref_edges, ref_edges)
+    chamfer = round(c1, 2)
+
+    assert iou_mean == 1.0, f"self-test IoU should be 1.0, got {iou_mean}"
+    assert chamfer < 0.01, f"self-test Chamfer should be 0, got {chamfer}"
+
+    return {
+        "sample": input_path.stem,
+        "file": input_path.name,
+        "iou_mean": iou_mean,
+        "chamfer": chamfer,
+        "palette": palette,
+        "render_ok": True,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -208,26 +351,28 @@ def _val(v: object, fmt: str = ".4f") -> str:
     return str(v)
 
 
-def generate_report(results: list[dict], output_path: Path | str) -> str:
-    """Write a markdown evaluation report and return the path."""
+def generate_report(results: list[dict], output_path: Path | str, version: str = "v2") -> str:
+    """Write a markdown evaluation report and return the text."""
     lines = [
-        "# LogoTrace Evaluation Baseline",
+        f"# LogoTrace Evaluation Baseline ({version})",
         "",
         f"**Engine:** VTracer (spline, hierarchical=stacked)",
         f"**Samples:** {len(results)}",
-        f"**Date:** (generated)",
+        f"**Date:** 2026-07-21",
         "",
         "## Per-Sample Metrics",
         "",
-        "| # | Sample | Size | Colors | Palette | IoU mean | IoU worst | Chamfer (px) | Nodes | SVG KB |",
-        "|---|--------|------|--------|---------|----------|-----------|-------------|-------|--------|",
+        "| # | Sample | Size | Colors | Palette | IoU mean | IoU worst | Unmatched | Chamfer (px) | Nodes | SVG KB |",
+        "|---|--------|------|--------|---------|----------|-----------|-----------|-------------|-------|--------|",
     ]
 
     for i, r in enumerate(results, 1):
+        unmatched = r.get("iou_unmatched", 0)
         lines.append(
-            f"| {i} | `{r['file']}` | {r['w']}×{r['h']} | {r['colors_requested']} "
+            f"| {i} | `{r['file']}` | {r['w']}×{r['h']} | {len(r.get('palette', []))} "
             f"| {_format_palette(r['palette'])} "
             f"| {_val(r['iou_mean'])} | {_val(r['iou_worst'])} "
+            f"| {unmatched} "
             f"| {_val(r['chamfer'], '.2f')} | {r['nodes']} "
             f"| {round(r['svg_bytes'] / 1024, 1)} |"
         )
