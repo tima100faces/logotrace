@@ -112,7 +112,7 @@
     btnClear.classList.remove("hidden");
     btnRun.disabled = false;
     revokePdf();
-    setStatus("");
+    setStatus(""); // hint visible, no "Ready" message
   }
 
   function clearFile() {
@@ -124,7 +124,7 @@
     btnClear.classList.add("hidden");
     btnRun.disabled = true;
     revokePdf();
-    setStatus("");
+    setStatus("Auto smart-detects. Pick a number for exact ink count.");
   }
 
   function formatBytes(n) {

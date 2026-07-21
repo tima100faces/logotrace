@@ -354,6 +354,19 @@ def _select_from_pixels(
     return collapsed or [(0, 0, 0)]
 
 
+# Guard: if crush produced a single fill for a multi-color image,
+# fall back to mass-aware up_to (no crush).
+CRUSH_SINGLE_FILL_SOURCE_DIVERSITY = 4  # at least this many unique RGB values in source
+
+
+def _unique_color_count(rgb: np.ndarray) -> int:
+    """Count distinct RGB values in downsampled flat array."""
+    try:
+        return len(np.unique(rgb.reshape(-1, 3).astype(np.int32), axis=0))
+    except Exception:
+        return 999
+
+
 @dataclass(frozen=True)
 class PaletteResult:
     colors: list[tuple[int, int, int]]
@@ -418,6 +431,14 @@ def analyze_palette(
         ink = flat[~near_white] if near_white.any() else flat
         mode = "fullbleed"
         colors = _select_from_pixels(ink, max_colors, colors_mode=colors_mode)
+        # Guard: crush 1-fill on diverse image → self-correct
+        if (
+            colors_mode == COLORS_MODE_UP_TO
+            and len(colors) == 1
+            and max_colors > 1
+            and _unique_color_count(flat) >= CRUSH_SINGLE_FILL_SOURCE_DIVERSITY
+        ):
+            colors = _mass_aware_select(_build_clusters(ink), max_colors, colors_mode=COLORS_MODE_UP_TO)
         # ensure border/field color is present if distinct major
         if not any(_dist2(bg, c) <= MERGE_DIST2 for c in colors) and not _is_near_white(bg):
             colors = [bg] + [c for c in colors if _dist2(c, bg) > MERGE_DIST2]
