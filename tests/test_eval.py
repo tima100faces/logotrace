@@ -290,3 +290,14 @@ def test_self_test_perfect_on_all_samples(name: str):
     r = self_test_sample(src)
     assert r["iou_mean"] == 1.0, f"{name}: self-test IoU must be 1.0"
     assert r["chamfer"] < 0.01, f"{name}: self-test Chamfer must be 0"
+
+
+def test_large_image_auto_returns_result_not_none():
+    """Image larger than upscale cap → auto returns result with eff=1.0."""
+    from src.eval import _compute_effective_scale, _upscale_image
+    from PIL import Image
+    # 4000×3000 — longest side > 3072 cap, pixels > 9.5M
+    img = Image.new("RGB", (4000, 3000), (128, 128, 128))
+    up_img, eff = _upscale_image(img, "auto")
+    assert eff == 1.0, f"expected eff=1.0 for oversize image, got {eff}"
+    assert up_img.size == img.size, "image must be unchanged (no upscale)"

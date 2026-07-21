@@ -170,10 +170,7 @@ MIN_EFFECTIVE_SCALE = 1.05  # skip upscale if would be negligible
 
 
 def _compute_effective_scale(w: int, h: int, requested: float = 2.0) -> float:
-    """Compute upscale factor capped by memory limits.
-
-    effective = min(requested, 3072/max(w,h), sqrt(9.5M/(w*h)))
-    """
+    """Compute upscale factor capped by memory limits, clamped to ≥ 1.0."""
     max_side = max(w, h)
     total_px = w * h
     effective = min(
@@ -181,14 +178,15 @@ def _compute_effective_scale(w: int, h: int, requested: float = 2.0) -> float:
         MAX_UPSCALE_SIDE / max_side,
         (MAX_UPSCALE_PX / total_px) ** 0.5 if total_px > 0 else requested,
     )
-    return effective
+    return max(1.0, effective)
 
 
-def _upscale_image(img: Image.Image, variant: str) -> tuple[Image.Image, float] | None:
+def _upscale_image(img: Image.Image, variant: str) -> tuple[Image.Image, float]:
     """Upscale image for pre-trace experiment.
 
-    'auto' = apply default policy (up to 2x, capped by limits).
-    Returns (upscaled_img, effective_scale) or None if scale < MIN_EFFECTIVE_SCALE.
+    'auto' = default policy (up to 2x, capped by limits).
+    Always returns (img, effective_scale) — if effective ≤ 1.05 the
+    caller treats it as no-upscale (factor=1.0).
     """
     if variant == "off" or variant == "none":
         return img.copy(), 1.0
@@ -203,7 +201,7 @@ def _upscale_image(img: Image.Image, variant: str) -> tuple[Image.Image, float] 
 
     effective = _compute_effective_scale(img.width, img.height, requested)
     if effective < MIN_EFFECTIVE_SCALE:
-        return None
+        return img.copy(), 1.0  # too small — run normal pipeline
 
     up_w = int(img.width * effective)
     up_h = int(img.height * effective)
@@ -265,21 +263,7 @@ def evaluate_sample(
         tmpdir = Path(tmp)
 
         # 1 ─ Upscale preprocess (if requested)
-        result = _upscale_image(src_img, upscale)
-        if result is None:
-            elapsed = round(time.monotonic() - t0, 1)
-            return {
-                "sample": input_path.stem, "file": input_path.name,
-                "w": w, "h": h, "colors_requested": colors,
-                "palette": [], "bg_color": None, "mode": "paper",
-                "iou_mean": None, "iou_worst": None, "iou_bg": None,
-                "iou_aw": None, "iou_unmatched": 0, "chamfer": None,
-                "nodes": None, "svg_bytes": 0, "render_ok": False,
-                "upscale": upscale, "effective_scale": 1.0,
-                "elapsed": elapsed,
-                "error": "upscale skipped (effective scale < 1.05)",
-            }
-        upscaled_img, effective_scale = result
+        upscaled_img, effective_scale = _upscale_image(src_img, upscale)
         if effective_scale > 1.0:
             up_path = tmpdir / "upscaled.png"
             upscaled_img.save(up_path, format="PNG")
@@ -694,15 +678,8 @@ def run_matrix(
         for i, sp in enumerate(samples, 1):
             print(f"  [{i}/{len(samples)}] {sp.name} …", end=" ", flush=True)
             # thresh_scale: use effective_scale from upscale result, or 1.0 for off
-            # We need to know effective_scale BEFORE running pipeline, but
-            # _upscale_image gives it. So we call _upscale_image first, then
-            # use the returned scale as threshold.
             from src.eval import _upscale_image as _up
-            up_result = _up(load_image(sp), upscale_val)
-            if up_result is None:
-                eff = 1.0
-            else:
-                _, eff = up_result
+            _, eff = _up(load_image(sp), upscale_val)
             thresh = thresh_override if thresh_override is not None else eff
 
             r = evaluate_sample(
