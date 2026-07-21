@@ -26,9 +26,10 @@ python -m src.cli IN.jpg -o OUT.pdf -c 2 --colors-mode exact -g strict
 
 ## Automated
 - pytest: 15 passed
+- **Self-verify:** each PDF reverse-rasterized; ink_coverage matched source (not blank)
 
-## Sample re-run (02/06/07/08)
-See `output/sample_0X.pdf` after round 3.
+## Sample re-run (all 8, geom=basic) — agent-verified
+All `output/sample_0X.pdf` non-blank via pdftoppm.
 
 ## Follow-ups
 - sample_08 gray banding: try `-c 2 --colors-mode exact`
