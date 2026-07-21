@@ -323,6 +323,44 @@
     { passive: false }
   );
 
+  // Hand tool: drag to pan inside the fixed stage (no page reflow)
+  let panning = false;
+  let panX = 0;
+  let panY = 0;
+  let panLeft = 0;
+  let panTop = 0;
+  outStage.style.cursor = "grab";
+  outStage.addEventListener("pointerdown", (e) => {
+    if (!pdfDoc || e.button !== 0) return;
+    panning = true;
+    panX = e.clientX;
+    panY = e.clientY;
+    panLeft = outStage.scrollLeft;
+    panTop = outStage.scrollTop;
+    outStage.setPointerCapture(e.pointerId);
+    outStage.classList.add("panning");
+    outStage.style.cursor = "grabbing";
+    e.preventDefault();
+  });
+  outStage.addEventListener("pointermove", (e) => {
+    if (!panning) return;
+    outStage.scrollLeft = panLeft - (e.clientX - panX);
+    outStage.scrollTop = panTop - (e.clientY - panY);
+  });
+  function endPan(e) {
+    if (!panning) return;
+    panning = false;
+    outStage.classList.remove("panning");
+    outStage.style.cursor = "grab";
+    try {
+      outStage.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  }
+  outStage.addEventListener("pointerup", endPan);
+  outStage.addEventListener("pointercancel", endPan);
+
   let resizeTimer = 0;
   window.addEventListener("resize", () => {
     if (!pdfDoc) return;

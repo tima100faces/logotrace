@@ -66,7 +66,6 @@ def vectorize_to_svg(
             _path, palette, _mode = prepare_for_trace(
                 source, colors, prepared, colors_mode=colors_mode
             )
-            # Same as color-v1: color mode + mild speckle so thin strokes survive
             run_vtracer(
                 prepared,
                 svg_tmp,
@@ -131,15 +130,16 @@ def vectorize_bytes(
     filename_hint: str = "upload.png",
     fmt: str = "pdf",
     geom: str = "off",
+    debug_save: bool = True,
 ) -> bytes:
-    """Vectorize raw bytes → PDF or SVG bytes."""
+    """Vectorize raw bytes → PDF or SVG bytes. Optionally dumps to input/output."""
     fmt = fmt.lower().strip()
     if fmt not in ("pdf", "svg"):
         raise VectorizeError("fmt must be 'pdf' or 'svg'")
     if not data:
         raise VectorizeError("empty image payload")
 
-    svg_text, _palette = vectorize_to_svg(
+    svg_text, palette = vectorize_to_svg(
         data=data,
         colors=colors,
         colors_mode=colors_mode,
@@ -154,9 +154,6 @@ def vectorize_bytes(
         except PdfError as exc:
             raise VectorizeError(str(exc)) from exc
 
-    # self-check via temp file
-    import tempfile
-
     suffix = ".pdf" if fmt == "pdf" else ".svg"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
         tmp_path = Path(tf.name)
@@ -167,4 +164,22 @@ def vectorize_bytes(
         raise VectorizeError(f"output failed self-check: {exc}") from exc
     finally:
         tmp_path.unlink(missing_ok=True)
+
+    if debug_save:
+        try:
+            from src.debug_save import save_debug_run
+
+            save_debug_run(
+                input_bytes=data,
+                filename_hint=filename_hint,
+                output_bytes=payload,
+                fmt=fmt,
+                colors=colors,
+                colors_mode=colors_mode,
+                palette=palette,
+                geom=geom,
+                source="api",
+            )
+        except Exception:
+            pass
     return payload

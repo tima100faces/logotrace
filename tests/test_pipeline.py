@@ -18,7 +18,7 @@ from src.tracer_vtracer import resolve_vtracer_bin
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
-SAMPLES = Path(__file__).resolve().parents[1] / "samples"
+SAMPLES = Path(__file__).resolve().parents[1] / "input"
 
 
 def _make_tiny_logo(path: Path) -> None:

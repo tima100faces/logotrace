@@ -10,7 +10,8 @@ venv/
 dist/
 build/
 output/
+# UI debug dumps (keep tracked sample_*.jpg under input/)
+input/ui_*
+input/last.*
 .DS_Store
 *.log
-# keep sample inputs; ignore accidental huge dumps
-samples/*.svg

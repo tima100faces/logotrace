@@ -296,6 +296,13 @@ kbd {
   justify-content: center;
   padding: 20px;
   outline: none;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.out-stage.panning,
+.out-stage:active {
+  cursor: grabbing;
 }
 .out-stage:focus-visible {
   border-color: var(--ink);

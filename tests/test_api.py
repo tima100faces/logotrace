@@ -6,7 +6,7 @@ from PIL import Image
 from src.api import app
 
 FIXTURES = Path(__file__).parent / "fixtures"
-SAMPLES = Path(__file__).resolve().parents[1] / "samples"
+SAMPLES = Path(__file__).resolve().parents[1] / "input"
 
 
 def _ensure_fixture() -> Path:

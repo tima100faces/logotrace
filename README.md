@@ -20,11 +20,11 @@ Also uses `rsvg-convert` (librsvg2-bin) for SVG→PDF when available.
 
 ```bash
 source .venv/bin/activate
-PYTHONPATH=/root/logotrace python -m src.cli samples/sample_06.jpg -o output/sample_06.pdf
+PYTHONPATH=/root/logotrace python -m src.cli input/sample_06.jpg -o output/sample_06.pdf
 # auto (default): up_to 4 + gradient crush
 PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.pdf -c 4 --colors-mode up_to
 # manual exact K (UI slider): no crush — dual gray survives (sample_05)
-PYTHONPATH=/root/logotrace python -m src.cli samples/sample_05.jpg -o out.pdf -c 2 --colors-mode exact
+PYTHONPATH=/root/logotrace python -m src.cli input/sample_05.jpg -o out.pdf -c 2 --colors-mode exact
 # debug SVG:
 PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.svg --format svg
 ```
@@ -53,7 +53,9 @@ curl -s -F "file=@logo.jpg" -F "palette=2" -F "format=pdf" \
 # Response headers: X-LogoTrace-Colors, X-LogoTrace-Colors-Mode
 ```
 
-Web UI (English, light): drop / click / **paste** · Colors Auto|1–4 · PDF preview + download.
+Web UI (English, light): drop / click / **paste** · Colors Auto|1–4 · canvas preview + zoom/pan · PDF download.
+
+Debug dumps (API): `input/ui_*` + `output/ui_*` + `last.*` (on by default; `LOGOTRACE_DEBUG_SAVE=0` to disable). Soft cap 500 runs, no time purge.
 
 | `palette` | Meaning |
 |-----------|---------|
