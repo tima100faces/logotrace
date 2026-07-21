@@ -16,7 +16,14 @@ import numpy as np
 from PIL import Image
 from scipy.ndimage import distance_transform_edt
 
-from src.colors import COLORS_MODE_UP_TO
+from src.colors import (
+    COLORS_MODE_UP_TO,
+    BG_DIST2,
+    PAPER_WHITE_FRACTION,
+    NEAR_WHITE_MIN,
+    _is_near_white,
+    estimate_background,
+)
 from src.config import DEFAULT_COLORS
 from src.pipeline import VectorizeError, vectorize_to_svg
 from src.preprocess import load_image
@@ -40,7 +47,7 @@ def _binarize(arr: np.ndarray, palette: list[tuple[int, int, int]]) -> np.ndarra
 
 
 # ---------------------------------------------------------------------------
-# Color masks (on binarized images — exact match is correct now)
+# Color masks (on binarized images — exact match is correct)
 # ---------------------------------------------------------------------------
 
 def _color_mask(arr: np.ndarray, color: tuple[int, int, int]) -> np.ndarray:
@@ -66,7 +73,6 @@ def _hungarian_pair(
     used_out: set[int] = set()
     pairs: list[tuple[int, int]] = []
 
-    # Sort ref colors by index order (stable)
     for ri in range(len(ref_palette)):
         best_j = -1
         best_d = float("inf")
@@ -92,11 +98,9 @@ def _edge_map(arr: np.ndarray) -> np.ndarray:
     """Edge map on a binarized image: pixel differs from right or bottom neighbour."""
     h, w = arr.shape[:2]
     edges = np.zeros((h, w), dtype=bool)
-    # horizontal edges
     diff_h = np.any(arr[:, :-1] != arr[:, 1:], axis=2)
     edges[:, :-1] |= diff_h
     edges[:, 1:] |= diff_h
-    # vertical edges
     diff_v = np.any(arr[:-1, :] != arr[1:, :], axis=2)
     edges[:-1, :] |= diff_v
     edges[1:, :] |= diff_v
@@ -110,8 +114,7 @@ def _edge_map(arr: np.ndarray) -> np.ndarray:
 def _chamfer_distance(a: np.ndarray, b: np.ndarray) -> float:
     """Mean Chamfer distance (pixels) from edge set a to edge set b.
 
-    Uses Euclidean distance transform for O(N) memory and speed.
-    Empty edge set on either side → 0.0 (no edges to compare = perfect match).
+    Empty edge set on either side → 0.0.
     """
     ay, ax = np.where(a)
     if len(ay) == 0:
@@ -139,6 +142,54 @@ def _count_svg_nodes(svg_text: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Background detection for evaluation palette
+# ---------------------------------------------------------------------------
+
+def _dist2_rgb(a: tuple[int, int, int], b: tuple[int, int, int]) -> int:
+    return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
+
+
+def _compute_near_white_fraction(rgb_arr: np.ndarray) -> float:
+    """Fraction of pixels with all channels >= NEAR_WHITE_MIN."""
+    flat = rgb_arr.reshape(-1, 3)
+    nw = (
+        (flat[:, 0] >= NEAR_WHITE_MIN)
+        & (flat[:, 1] >= NEAR_WHITE_MIN)
+        & (flat[:, 2] >= NEAR_WHITE_MIN)
+    )
+    return float(nw.mean()) if len(flat) else 0.0
+
+
+def _eval_palette_and_mode(
+    inks: list[tuple[int, int, int]],
+    src_rgb: np.ndarray,
+) -> tuple[list[tuple[int, int, int]], str]:
+    """Build evaluation palette: inks + optional background class.
+
+    Returns (eval_palette, mode) where mode is 'paper' or 'fullbleed'.
+    Paper mode: background is a first-class mask color.
+    Fullbleed mode: no background class (field color IS an ink).
+    """
+    bg = estimate_background(Image.fromarray(src_rgb))
+    nw_frac = _compute_near_white_fraction(src_rgb)
+
+    # Fullbleed if: (a) background color is close to an ink, or (b) few near-white pixels
+    bg_is_ink = any(_dist2_rgb(bg, ink) <= BG_DIST2 for ink in inks)
+    is_fullbleed = bg_is_ink or nw_frac < PAPER_WHITE_FRACTION
+
+    if is_fullbleed:
+        return list(inks), "fullbleed"
+
+    # Paper mode: add background as last entry
+    return list(inks) + [bg], "paper"
+
+
+def _masks_identical(a: np.ndarray, b: np.ndarray) -> bool:
+    """True if two RGB arrays are pixel-identical."""
+    return bool(np.array_equal(a, b))
+
+
+# ---------------------------------------------------------------------------
 # Evaluation entry
 # ---------------------------------------------------------------------------
 
@@ -152,46 +203,46 @@ def evaluate_sample(
     """Run pipeline on a sample and return a dict of metrics.
 
     Keys:
-        sample, file, w, h, colors_requested, palette,
-        iou_mean, iou_worst, iou_unmatched, chamfer,
-        nodes, svg_bytes, render_ok
+        sample, file, w, h, colors_requested, palette (inks), bg_color,
+        mode (paper|fullbleed), iou_mean, iou_worst, iou_bg,
+        iou_unmatched, chamfer, nodes, svg_bytes, render_ok
     """
     input_path = Path(input_path)
     src_img = load_image(input_path)
     w, h = src_img.size
+    src_rgb = np.asarray(src_img.convert("RGB"))
 
     with tempfile.TemporaryDirectory(prefix="logotrace-eval-") as tmp:
         tmpdir = Path(tmp)
 
-        # 1 ─ Run pipeline → SVG + canonical palette
+        # 1 ─ Run pipeline → SVG + canonical ink palette
         try:
-            svg_text, palette = vectorize_to_svg(
+            svg_text, inks = vectorize_to_svg(
                 input_path=input_path, colors=colors,
                 colors_mode=colors_mode, geom=geom,
             )
         except VectorizeError as exc:
             return {
-                "sample": input_path.stem,
-                "file": input_path.name,
-                "w": w, "h": h,
-                "colors_requested": colors,
-                "palette": [],
-                "iou_mean": None, "iou_worst": None,
-                "iou_unmatched": 0,
-                "chamfer": None,
-                "nodes": None, "svg_bytes": 0,
-                "render_ok": False,
+                "sample": input_path.stem, "file": input_path.name,
+                "w": w, "h": h, "colors_requested": colors,
+                "palette": [], "bg_color": None, "mode": "paper",
+                "iou_mean": None, "iou_worst": None, "iou_bg": None,
+                "iou_unmatched": 0, "chamfer": None,
+                "nodes": None, "svg_bytes": 0, "render_ok": False,
                 "error": str(exc),
             }
 
         svg_bytes = len(svg_text.encode("utf-8"))
 
-        # 2 ─ Build reference: binarize original image to the CANONICAL palette
-        #     (same _binarize as output — no paper/fullbleed mode, just nearest-color snap)
-        src_rgb = np.asarray(src_img.convert("RGB"))
-        ref_arr = _binarize(src_rgb, palette)
+        # 2 ─ Build evaluation palette: inks + background
+        eval_palette, mode = _eval_palette_and_mode(inks, src_rgb)
+        bg_color = eval_palette[-1] if mode == "paper" else None
+        has_bg = mode == "paper"
 
-        # 3 ─ Render SVG → raster at source resolution
+        # 3 ─ Build reference: binarize original to eval palette
+        ref_arr = _binarize(src_rgb, eval_palette)
+
+        # 4 ─ Render SVG → raster at source resolution
         svg_tmp = tmpdir / "trace.svg"
         svg_tmp.write_text(svg_text, encoding="utf-8")
         trace_png = tmpdir / "trace.png"
@@ -203,8 +254,13 @@ def evaluate_sample(
 
         iou_mean: Optional[float] = None
         iou_worst: Optional[float] = None
+        iou_bg: Optional[float] = None
         iou_unmatched: int = 0
         chamfer: Optional[float] = None
+        degenerate: bool = False
+
+        # 7 ─ Node count
+        nodes_val = _count_svg_nodes(svg_text)
 
         if render_ok and trace_png.is_file():
             trace_img = Image.open(trace_png)
@@ -212,67 +268,83 @@ def evaluate_sample(
                 trace_img = trace_img.resize((w, h), Image.Resampling.LANCZOS)
             trace_arr_orig = np.asarray(trace_img.convert("RGB"))
 
-            # Extract output palette (colors actually present in rendered SVG)
-            out_arr = _binarize(trace_arr_orig, palette)
+            out_arr = _binarize(trace_arr_orig, eval_palette)
 
-            # 4 ─ Per-color IoU via Hungarian pairing
-            ref_colors_in_use: list[tuple[int, int, int]] = []
-            for c in palette:
+            # Sanity: if masks are identical and output has meaningful nodes,
+            # this is a degenerate measurement.
+            if nodes_val > 0 and _masks_identical(ref_arr, out_arr):
+                degenerate = True
+
+            # 5 ─ Per-color IoU via Hungarian pairing
+            # Gather colors actually present (in ref or output)
+            ref_colors_present: list[tuple[int, int, int]] = []
+            for c in eval_palette:
                 if _color_mask(ref_arr, c).any():
-                    ref_colors_in_use.append(c)
+                    ref_colors_present.append(c)
 
-            out_colors_in_use: list[tuple[int, int, int]] = []
-            for c in palette:
+            out_colors_present: list[tuple[int, int, int]] = []
+            for c in eval_palette:
                 if _color_mask(out_arr, c).any():
-                    out_colors_in_use.append(c)
+                    out_colors_present.append(c)
 
-            pairs = _hungarian_pair(ref_colors_in_use, out_colors_in_use)
-            ious: list[float] = []
+            pairs = _hungarian_pair(ref_colors_present, out_colors_present)
+            ink_ious: list[float] = []
+            bg_ious: list[float] = []
+
             for ri, oi in pairs:
-                ref_c = ref_colors_in_use[ri]
-                out_c = out_colors_in_use[oi]
+                ref_c = ref_colors_present[ri]
+                out_c = out_colors_present[oi]
                 ref_mask = _color_mask(ref_arr, ref_c)
                 out_mask = _color_mask(out_arr, out_c)
                 inter = np.logical_and(ref_mask, out_mask).sum()
                 union = np.logical_or(ref_mask, out_mask).sum()
                 if union > 0:
-                    ious.append(float(inter) / float(union))
+                    iou_val = float(inter) / float(union)
+                    if has_bg and ref_c == bg_color:
+                        bg_ious.append(iou_val)
+                    else:
+                        ink_ious.append(iou_val)
 
-            unmatched = len(ref_colors_in_use) - len(pairs)
+            unmatched = len(ref_colors_present) - len(pairs)
             iou_unmatched = max(0, unmatched)
 
-            if ious:
-                iou_mean = round(float(np.mean(ious)), 4)
-                iou_worst = round(float(np.min(ious)), 4)
+            all_ious = ink_ious + bg_ious
+            if all_ious:
+                iou_mean = round(float(np.mean(all_ious)), 4)
+                # IoU worst: always includes background if present
+                iou_worst = round(float(np.min(all_ious)), 4)
+            if bg_ious:
+                iou_bg = round(float(np.mean(bg_ious)), 4)
 
-            # 5 ─ Edge Chamfer (on binarized images → hard edges only)
+            # 6 ─ Edge Chamfer (ink↔bg boundaries now visible)
             ref_edges = _edge_map(ref_arr)
             out_edges = _edge_map(out_arr)
             c1 = _chamfer_distance(ref_edges, out_edges)
             c2 = _chamfer_distance(out_edges, ref_edges)
             chamfer = round((c1 + c2) / 2.0, 2)
 
-        # 6 ─ Node count
-        nodes = _count_svg_nodes(svg_text)
-
         return {
             "sample": input_path.stem,
             "file": input_path.name,
             "w": w, "h": h,
             "colors_requested": colors,
-            "palette": palette,
+            "palette": inks,
+            "bg_color": bg_color,
+            "mode": mode,
             "iou_mean": iou_mean,
             "iou_worst": iou_worst,
+            "iou_bg": iou_bg,
             "iou_unmatched": iou_unmatched,
             "chamfer": chamfer,
-            "nodes": nodes,
+            "nodes": nodes_val,
             "svg_bytes": svg_bytes,
             "render_ok": render_ok,
+            "degenerate": degenerate,
         }
 
 
 # ---------------------------------------------------------------------------
-# Self-test — metric harness correctness on perfect match
+# Self-test — metric harness correctness on perfect match (v3)
 # ---------------------------------------------------------------------------
 
 def self_test_sample(
@@ -284,38 +356,31 @@ def self_test_sample(
 ) -> dict:
     """Verify metric harness correctness on a canonical reference.
 
-    Builds the pipeline's canonical reference (palette-remapped original),
-    then measures it AGAINST ITSELF. Must yield IoU = 1.0, Chamfer = 0 for
-    every sample. Any deviation means the metric code or binarization is broken.
-
-    This test would have caught the v1 bug: old code used two different palettes
-    for reference and output, so even the reference couldn't self-match perfectly.
+    Builds reference from eval palette (inks + background), measures it
+    AGAINST ITSELF. Must yield IoU = 1.0, Chamfer = 0.
+    Additionally asserts masks differ from a different random perturbation.
     """
     input_path = Path(input_path)
     src_img = load_image(input_path)
+    src_rgb = np.asarray(src_img.convert("RGB"))
 
-    # Get CANONICAL palette from the pipeline (single source of truth)
-    svg_text, palette = vectorize_to_svg(
+    svg_text, inks = vectorize_to_svg(
         input_path=input_path, colors=colors,
         colors_mode=colors_mode, geom=geom,
     )
 
-    # Build reference from this palette (binarize, same as evaluate_sample)
-    src_rgb = np.asarray(src_img.convert("RGB"))
-    ref_arr = _binarize(src_rgb, palette)
+    eval_palette, mode = _eval_palette_and_mode(inks, src_rgb)
+    ref_arr = _binarize(src_rgb, eval_palette)
 
-    # Measure reference against itself
+    # Self-comparison: must be perfect
     ious = []
-    for c in palette:
+    for c in eval_palette:
         mask = _color_mask(ref_arr, c)
         if not mask.any():
             continue
-        # Self-comparison: intersection == union
         ious.append(1.0)
 
     iou_mean = 1.0 if ious else 1.0
-
-    # Edge Chamfer: reference edges against themselves
     ref_edges = _edge_map(ref_arr)
     c1 = _chamfer_distance(ref_edges, ref_edges)
     chamfer = round(c1, 2)
@@ -323,12 +388,22 @@ def self_test_sample(
     assert iou_mean == 1.0, f"self-test IoU should be 1.0, got {iou_mean}"
     assert chamfer < 0.01, f"self-test Chamfer should be 0, got {chamfer}"
 
+    # Sanity: if output has meaningful edges, a perturbed reference should NOT
+    # match perfectly — proves the metric can detect differences.
+    if ref_edges.sum() > 0:
+        perturbed = ref_arr.copy()
+        # Shift one pixel column
+        perturbed[:, :-1] = perturbed[:, 1:]
+        ref_pert_edges = _edge_map(perturbed)
+        cp = _chamfer_distance(ref_edges, ref_pert_edges)
+        assert cp > 0.01, f"perturbed Chamfer should be >0, got {cp}"
+
     return {
         "sample": input_path.stem,
         "file": input_path.name,
         "iou_mean": iou_mean,
         "chamfer": chamfer,
-        "palette": palette,
+        "mode": mode,
         "render_ok": True,
     }
 
@@ -351,7 +426,7 @@ def _val(v: object, fmt: str = ".4f") -> str:
     return str(v)
 
 
-def generate_report(results: list[dict], output_path: Path | str, version: str = "v2") -> str:
+def generate_report(results: list[dict], output_path: Path | str, version: str = "v3") -> str:
     """Write a markdown evaluation report and return the text."""
     lines = [
         f"# LogoTrace Evaluation Baseline ({version})",
@@ -362,38 +437,58 @@ def generate_report(results: list[dict], output_path: Path | str, version: str =
         "",
         "## Per-Sample Metrics",
         "",
-        "| # | Sample | Size | Colors | Palette | IoU mean | IoU worst | Unmatched | Chamfer (px) | Nodes | SVG KB |",
-        "|---|--------|------|--------|---------|----------|-----------|-----------|-------------|-------|--------|",
+        "| # | Sample | Size | Mode | Inks | IoU mean | IoU worst | IoU bg | Chamfer (px) | Nodes | SVG KB |",
+        "|---|--------|------|------|------|----------|-----------|--------|-------------|-------|--------|",
     ]
 
     for i, r in enumerate(results, 1):
-        unmatched = r.get("iou_unmatched", 0)
+        mode_str = r.get("mode", "paper")
+        bg_str = _val(r.get("iou_bg")) if r.get("iou_bg") is not None else "—"
+        degenerate = " ⚠" if r.get("degenerate") else ""
         lines.append(
-            f"| {i} | `{r['file']}` | {r['w']}×{r['h']} | {len(r.get('palette', []))} "
+            f"| {i} | `{r['file']}` | {r['w']}×{r['h']} | {mode_str} "
             f"| {_format_palette(r['palette'])} "
-            f"| {_val(r['iou_mean'])} | {_val(r['iou_worst'])} "
-            f"| {unmatched} "
+            f"| {_val(r['iou_mean'])}{degenerate} | {_val(r['iou_worst'])} "
+            f"| {bg_str} "
             f"| {_val(r['chamfer'], '.2f')} | {r['nodes']} "
             f"| {round(r['svg_bytes'] / 1024, 1)} |"
         )
 
+    # Degenerate warnings
+    degs = [r for r in results if r.get("degenerate")]
+    if degs:
+        lines.append("")
+        lines.append("> ⚠ = degenerate metric (binarized masks identical — whole frame one color, no edges)")
+
     # Aggregate
     iou_vals = [r["iou_mean"] for r in results if r["iou_mean"] is not None]
-    chamfer_vals = [r["chamfer"] for r in results if r["chamfer"] is not None]
+    chamfer_vals = [r["chamfer"] for r in results if r["chamfer"] is not None and not r.get("degenerate")]
     node_vals = [r["nodes"] for r in results if r["nodes"] is not None]
     size_vals = [r["svg_bytes"] for r in results if r["svg_bytes"] is not None]
+    bg_vals = [r["iou_bg"] for r in results if r.get("iou_bg") is not None]
 
     lines.append("")
     lines.append("## Aggregate")
     lines.append("")
     if iou_vals:
         lines.append(f"- **IoU mean:**  {np.mean(iou_vals):.4f}  (min: {np.min(iou_vals):.4f}, max: {np.max(iou_vals):.4f})")
+    if bg_vals:
+        lines.append(f"- **IoU bg mean:** {np.mean(bg_vals):.4f}  (min: {np.min(bg_vals):.4f}, max: {np.max(bg_vals):.4f})")
     if chamfer_vals:
         lines.append(f"- **Chamfer mean:** {np.mean(chamfer_vals):.2f} px  (min: {np.min(chamfer_vals):.2f}, max: {np.max(chamfer_vals):.2f})")
     if node_vals:
         lines.append(f"- **Nodes mean:**  {np.mean(node_vals):.0f}  (min: {np.min(node_vals)}, max: {np.max(node_vals)})")
     if size_vals:
         lines.append(f"- **SVG size mean:** {np.mean(size_vals) / 1024:.1f} KB  (min: {np.min(size_vals) / 1024:.1f}, max: {np.max(size_vals) / 1024:.1f})")
+
+    # Fullbleed count
+    fb = [r for r in results if r.get("mode") == "fullbleed"]
+    if fb:
+        lines.append(f"- **Fullbleed samples:** {len(fb)} (no background class)")
+
+    # Degenerate count
+    if degs:
+        lines.append(f"- **Degenerate samples:** {len(degs)} (⚠ in table)")
 
     # Problem cases
     worst_chamfer = sorted(
@@ -452,12 +547,14 @@ def run_eval(
         r = evaluate_sample(sp, colors=colors, colors_mode=colors_mode, geom=geom)
         results.append(r)
         iou_str = f"IoU={_val(r['iou_mean'])}" if r["iou_mean"] is not None else "IoU=—"
-        ch_str = f"Chamfer={_val(r['chamfer'], '.1f')}px" if r["chamfer"] is not None else "Chamfer=—"
-        status = "✓" if r.get("render_ok") else "✗ RENDER FAIL"
-        print(f"{status} {iou_str} {ch_str} nodes={r['nodes']}")
+        ch_str = f"Ch={_val(r['chamfer'], '.1f')}px" if r["chamfer"] is not None else "Ch=—"
+        mode = r.get("mode", "?")
+        deg = " ⚠" if r.get("degenerate") else ""
+        status = "✓" if r.get("render_ok") else "✗"
+        print(f"{status} {mode}{deg} {iou_str} {ch_str} nodes={r['nodes']}")
 
     print(f"\nWriting report → {output_report}")
-    generate_report(results, output_report)
+    generate_report(results, output_report, version="v3")
     print("Done.")
     return 0
 
