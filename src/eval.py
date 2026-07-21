@@ -242,6 +242,7 @@ def evaluate_sample(
     upscale: str = "auto",
     vtracer_threshold_scale: float = 1.0,
     engine: str = "vtracer",
+    geometry_fit: bool = False,
     dump_diffs_dir: Path | str | None = None,
 ) -> dict:
     """Run pipeline on a sample and return a dict of metrics.
@@ -290,6 +291,7 @@ def evaluate_sample(
                 colors_mode=colors_mode, geom=geom,
                 upscale=pipe_upscale,
                 engine=engine,
+                geometry_fit=geometry_fit,
             )
             # If pipeline handled upscale, use its effective_scale
             if pipe_upscale:
@@ -676,12 +678,13 @@ def run_matrix(
         return 1
 
     # Variants: add new rows here as needed
-    variants_config: list[tuple[str, str, float, str]] = [
-        ("vtracer+upscale", "auto", 1.0, "vtracer"),
+    variants_config: list[tuple[str, str, float, str, bool]] = [
+        ("vtracer+upscale", "auto", 1.0, "vtracer", False),
+        ("vtracer+upscale+fit", "auto", 1.0, "vtracer", True),
     ]
     all_results: dict[str, list[dict]] = {}
 
-    for var_name, upscale_val, thresh_override, eng_val in variants_config:
+    for var_name, upscale_val, thresh_override, eng_val, fit_val in variants_config:
         print(f"\n{'='*60}")
         print(f"VARIANT: {var_name}")
         print(f"{'='*60}")
@@ -697,7 +700,7 @@ def run_matrix(
             r = evaluate_sample(
                 sp, colors=colors, colors_mode=colors_mode, geom=geom,
                 upscale=upscale_val, vtracer_threshold_scale=thresh,
-                engine=eng_val,
+                engine=eng_val, geometry_fit=fit_val,
             )
             results.append(r)
             eff_str = f" eff={r.get('effective_scale',1.0):.1f}x" if r.get('effective_scale',1.0) > 1.0 else ""
@@ -707,7 +710,7 @@ def run_matrix(
         generate_report(results, out_path, version=f"v4-{var_name}")
 
     # Build comparison matrix
-    vnames = [vn for vn, _, _, _ in variants_config]
+    vnames = [vn for vn, _, _, _, _ in variants_config]
 
     def _vr(var: str, si: int, key: str, fmt_str: str = ".4f") -> str:
         v = all_results[var][si].get(key)
