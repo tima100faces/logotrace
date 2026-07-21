@@ -129,7 +129,8 @@ def prepare_for_trace(
         mode=analysis.mode,
         keep_alpha=keep_alpha,
     )
-    prepared = _smooth_label_edges(prepared)
+    # NOTE: morphological edge smooth removed — it faceted large circles/text (sample_08).
+    # Gradient crush alone is enough for banding; keep hard labels for VTracer splines.
 
     dest_path = Path(dest_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
