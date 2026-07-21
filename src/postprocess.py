@@ -1,4 +1,4 @@
-"""SVG post-process: optional svgo + geometry normalize / circle snap."""
+"""SVG post-process: optional svgo + optional geometry normalize."""
 from __future__ import annotations
 
 import re
@@ -7,11 +7,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from src.geometry import (
-    GEOM_OFF,
-    normalize_svg_geometry,
-    snap_nearly_circular_paths,
-)
+from src.geometry import GEOM_OFF, normalize_svg_geometry
 
 
 class PostprocessError(RuntimeError):
@@ -51,12 +47,13 @@ def maybe_svgo(svg_text: str) -> str:
 
 
 def finalize_svg(svg_path: Path | str, *, geom: str = "off") -> str:
+    """
+    Default geom=off: raw VTracer splines (production quality).
+    basic/strict: experimental only — can facet curves.
+    """
     text = read_svg(svg_path)
     text = maybe_svgo(text)
     level = (geom or GEOM_OFF).lower().strip()
-    if level == GEOM_OFF:
-        # Gentle: only snap large near-disks to true circles (sample_08 badge).
-        text = snap_nearly_circular_paths(text)
-    else:
+    if level != GEOM_OFF:
         text = normalize_svg_geometry(text, level=level)
     return text
