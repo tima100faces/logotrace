@@ -19,7 +19,7 @@ Build a local tool that converts **flat logo rasters** (1-3 solid colors) into *
 - [ ] CLI converts PNG/JPG/WebP → SVG for samples in `samples/`
 - [ ] HTTP `GET /health` → 200
 - [ ] HTTP `POST /vectorize` accepts image, returns SVG
-- [ ] `--colors N` means **at most N** colors (default TBD; start with default 3)
+- [ ] `--colors N` means **at most N** colors (default **4**)
 - [ ] Transparent source → transparent SVG background (do not flatten onto white)
 - [ ] Output is flat fills (no intentional gradients)
 - [ ] At least one automated test with a tiny fixture image
@@ -30,7 +30,7 @@ Build a local tool that converts **flat logo rasters** (1-3 solid colors) into *
 
 - Web UI (after tracer quality is validated on real samples)
 - PDF export (vector PDF from SVG)
-- Tune exact default N and auto-detect heuristics
+- Tune auto-detect heuristics for palette size
 
 ---
 
@@ -175,10 +175,11 @@ def vectorize(image_bytes: bytes, colors: int = 2) -> str:
 
 ## Still open (minor — can resolve on samples)
 
-1. Default `N` for `--colors` when user omits flag (proposal: **3**)
-2. Auto-detect palette size vs always use default N
-3. Manual QA bar: "usable without edits" vs "ok with 2 min cleanup"
-4. Public bind vs localhost-only for API during tests (proposal: **127.0.0.1**)
+1. Default `N` for `--colors` when user omits flag → **4** (locked)
+2. Auto-detect palette size vs always use default N (later)
+3. Manual QA bar after Tim opens `output/*.svg`
+4. Public bind vs localhost-only → **127.0.0.1** for now
+5. Samples may be committed (no secrets)
 
 ---
 

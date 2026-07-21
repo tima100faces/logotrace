@@ -9,8 +9,8 @@ venv/
 .ruff_cache/
 dist/
 build/
-*.svg
-!samples/**/*.svg
 output/
 .DS_Store
 *.log
+# keep sample inputs; ignore accidental huge dumps
+samples/*.svg

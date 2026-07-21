@@ -1,55 +1,72 @@
 # LogoTrace
 
-Flat logo raster-to-vector tracer (1-3 colors). Local MVP, not a Vectorizer.AI clone.
+Flat logo raster-to-vector tracer (up to N colors, default **4**). Local MVP.
 
-## Goal
-
-Convert flat logos / icons (1-3 solid colors, no photos) into clean editable SVG with sensible geometry and low node count.
+Not a Vectorizer.AI clone — classic pipeline: preprocess → **VTracer** → SVG.
 
 ## Status
 
-- Phase: **SPEC + PLAN** (awaiting human approval before implementation)
-- Location: `/root/logotrace`
-- License: GPL-3.0
+MVP CLI + API implemented. Web UI and PDF are post-MVP.
+
+## Setup
+
+```bash
+cd /root/logotrace
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+# binary ships in bin/vtracer (linux x86_64 musl)
+./bin/vtracer --version
+```
+
+## CLI
+
+```bash
+source .venv/bin/activate
+PYTHONPATH=/root/logotrace python -m src.cli samples/sample_01.jpg -o output/sample_01.svg
+PYTHONPATH=/root/logotrace python -m src.cli input.png -o out.svg --colors 4
+```
+
+- `--colors N` / `-c N` = **maximum** palette size (default 4)
+- Transparency in PNG is preserved (no white matte)
+
+## API (localhost)
+
+```bash
+source .venv/bin/activate
+PYTHONPATH=/root/logotrace uvicorn src.api:app --host 127.0.0.1 --port 8095
+
+curl -s http://127.0.0.1:8095/health
+curl -s -F "file=@logo.png" -F "colors=4" http://127.0.0.1:8095/vectorize -o out.svg
+```
+
+## Tests
+
+```bash
+source .venv/bin/activate
+PYTHONPATH=/root/logotrace pytest -q
+```
 
 ## Docs
 
 | File | What |
 |------|------|
-| [docs/SPEC.md](docs/SPEC.md) | Product/tech spec, success criteria, boundaries |
-| [docs/RESEARCH.md](docs/RESEARCH.md) | Research: Vectorizer.AI, OSS landscape, rejected tools |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture Decision Records (ADRs) |
-| [docs/plans/2026-07-21-mvp-implementation.md](docs/plans/2026-07-21-mvp-implementation.md) | Bite-sized implementation plan |
+| [docs/SPEC.md](docs/SPEC.md) | Spec + success criteria |
+| [docs/RESEARCH.md](docs/RESEARCH.md) | Research notes |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | ADRs |
+| [docs/plans/2026-07-21-mvp-implementation.md](docs/plans/2026-07-21-mvp-implementation.md) | Implementation plan |
+| [docs/QA-NOTES.md](docs/QA-NOTES.md) | Sample run results |
 
-## Scope (MVP)
+## Layout
 
-**In:**
-- PNG/JPG/WebP input
-- Force 1-3 color palette
-- Trace to flat filled SVG
-- CLI + simple HTTP API
-- Path simplify / SVGO cleanup
-
-**Out (for now):**
-- Photos / gradients / full-color art
-- Vectorizer.AI-level shape fitting / symmetry AI
-- Web UI
-- Multi-tenant SaaS
-
-## Quick start (after implementation)
-
-```bash
-# TBD after plan approval
-cd /root/logotrace
-# python -m src.cli input.png -o out.svg --colors 2
-# curl -F file=@logo.png http://localhost:PORT/vectorize
+```
+bin/vtracer     # bundled tracer binary
+src/            # Python package
+samples/        # input logos
+output/         # generated SVG (gitignored)
+tests/
 ```
 
-## Samples
+## License
 
-Put test logos in `samples/` (user will upload when ready).
-
-## Related research session
-
-Hermes research 2026-07-21: Vectorizer.AI vs VTracer / Potrace / linedraw / CairoSVG.
-CairoSVG = wrong direction (SVG→raster). linedraw = plotter line-art only.
+GPL-3.0-or-later. See `LICENSE` and `NOTICE` (VTracer MIT binary).

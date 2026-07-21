@@ -1,0 +1,11 @@
+LogoTrace
+Copyright (C) 2026 Tim Storozhev / contributors
+Licensed under GNU GPL-3.0-or-later.
+
+Third-party components:
+
+- VTracer (visioncortex) — bundled binary under bin/vtracer
+  Project: https://github.com/visioncortex/vtracer
+  See upstream LICENSE (MIT) for the VTracer binary/source.
+
+- Python dependencies listed in requirements.txt — see each package license.

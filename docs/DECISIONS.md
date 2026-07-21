@@ -141,7 +141,7 @@ Do **not** optimize for photo fidelity or automatic circle/star recognition in M
 
 **Context:** User cannot yet lock exact color counts; logos vary. Forced exact-N can invent junk colors or crush real ones.
 
-**Decision:** `--colors N` / API `colors=N` means **maximum** palette size. Engine may use fewer. Default N left slightly open (proposal: 3) until samples.
+**Decision:** `--colors N` / API `colors=N` means **maximum** palette size. Engine may use fewer. **Default N = 4.**
 
 **Rejected:** Always exactly N colors in output.
 
