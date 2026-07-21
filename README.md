@@ -21,13 +21,16 @@ Also uses `rsvg-convert` (librsvg2-bin) for SVG→PDF when available.
 ```bash
 source .venv/bin/activate
 PYTHONPATH=/root/logotrace python -m src.cli samples/sample_06.jpg -o output/sample_06.pdf
-PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.pdf --colors 4
+PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.pdf --colors 4 --colors-mode up_to --geom basic
+PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.pdf -c 2 --colors-mode exact -g strict
 # debug SVG:
 PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.svg --format svg
 ```
 
-- `--colors N` = max **ink** colors (default **4**). Paper/bg handled separately.
-- JPEG is first-class. Transparent PNG alpha preserved when present.
+- `--colors N` — palette size (default **4**)
+- `--colors-mode up_to|exact` — at most N vs collapse to N by mass
+- `--geom off|basic|strict` — path normalize (default **basic**)
+- JPEG first-class. Transparent PNG alpha preserved when present.
 
 ## API (localhost)
 

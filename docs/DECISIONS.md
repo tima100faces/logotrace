@@ -160,6 +160,35 @@ Do **not** optimize for photo fidelity or automatic circle/star recognition in M
 
 ---
 
+## ADR-13: Mass-aware palette + up_to/exact
+
+**Status:** Accepted  
+**Date:** 2026-07-21
+
+**Context:** Close brand hues must not collapse; JPEG dust should. User wants optional exact-N collapse before trace.
+
+**Decision:**
+- Default `colors_mode=up_to`
+- `exact` folds weakest clusters into top-N by mass
+- Major peers (≥3% ink mass) never merge unless ultra-close (≤12 RGB)
+
+---
+
+## ADR-14: Geometry normalize post-pass
+
+**Status:** Accepted  
+**Date:** 2026-07-21
+
+**Context:** VTracer splines wobble on straights and mess rounded corners.
+
+**Decision:**
+- Post-SVG: `geom=basic` default (RDP + collinear)
+- `strict` adds circle fit when stable
+- `off` keeps raw VTracer paths
+- Not a full Vectorizer shape engine
+
+---
+
 ## ADR-11: Primary output = RGB PDF; SVG is debug
 
 **Status:** Accepted  
