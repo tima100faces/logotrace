@@ -431,14 +431,6 @@ def analyze_palette(
         ink = flat[~near_white] if near_white.any() else flat
         mode = "fullbleed"
         colors = _select_from_pixels(ink, max_colors, colors_mode=colors_mode)
-        # Guard: crush 1-fill on diverse image → self-correct
-        if (
-            colors_mode == COLORS_MODE_UP_TO
-            and len(colors) == 1
-            and max_colors > 1
-            and _unique_color_count(flat) >= CRUSH_SINGLE_FILL_SOURCE_DIVERSITY
-        ):
-            colors = _mass_aware_select(_build_clusters(ink), max_colors, colors_mode=COLORS_MODE_UP_TO)
         # ensure border/field color is present if distinct major
         if not any(_dist2(bg, c) <= MERGE_DIST2 for c in colors) and not _is_near_white(bg):
             colors = [bg] + [c for c in colors if _dist2(c, bg) > MERGE_DIST2]
@@ -446,6 +438,34 @@ def analyze_palette(
                 colors = colors[:max_colors]
             else:
                 colors = colors[:max_colors]
+
+    # Guard: crush 1-fill on bimodal image → self-correct
+    if (
+        colors_mode == COLORS_MODE_UP_TO
+        and len(colors) == 1
+        and max_colors > 1
+    ):
+        ink2 = flat[~near_white] if (paper_mode and ink.size > 0) else (ink if ink.size > 0 else flat)
+        if len(ink2) > 0:
+            total = len(ink2)
+            # Bucket non-white pixels by lightness (0-255 into 13 buckets of ~20)
+            buckets: dict[int, int] = {}
+            hist_min = int(ink2.min())
+            hist_max = int(ink2.max())
+            # Only bimodal if span is wide enough to matter
+            if hist_max - hist_min > 60:
+                for px in ink2:
+                    k = int((int(px[0]) + int(px[1]) + int(px[2])) / 3.0 / 20.0)
+                    buckets[k] = buckets.get(k, 0) + 1
+                peaks = sorted(
+                    [(k, v / total) for k, v in buckets.items() if v / total > 0.10],
+                    key=lambda kv: kv[0]
+                )
+                if len(peaks) >= 2 and peaks[-1][0] - peaks[0][0] >= 3:
+                    # Bimodal — two mass peaks far apart. Crush was wrong.
+                    mass_clusters = _build_clusters(ink2)
+                    mass_colors = _mass_aware_select(mass_clusters, max_colors, colors_mode=COLORS_MODE_UP_TO)
+                    colors = mass_colors
 
     if not colors:
         colors = [(0, 0, 0)]
