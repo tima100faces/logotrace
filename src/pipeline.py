@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+from src.colors import COLORS_MODE_EXACT, COLORS_MODE_UP_TO
 from src.config import (
     DEFAULT_COLORS,
     MAX_COLORS,
@@ -27,15 +28,25 @@ def _check_colors(colors: int) -> int:
     return colors
 
 
+def _check_colors_mode(colors_mode: str) -> str:
+    m = (colors_mode or COLORS_MODE_UP_TO).lower().strip()
+    if m not in (COLORS_MODE_UP_TO, COLORS_MODE_EXACT):
+        raise VectorizeError("colors_mode must be 'up_to' or 'exact'")
+    return m
+
+
 def vectorize_to_svg(
     input_path: Path | str | None = None,
     *,
     data: bytes | None = None,
     colors: int = DEFAULT_COLORS,
+    colors_mode: str = COLORS_MODE_UP_TO,
     filename_hint: str = "upload.bin",
+    geom: str = "off",
 ) -> tuple[str, list[tuple[int, int, int]]]:
     """Core: raster → SVG string + extracted palette."""
     colors = _check_colors(colors)
+    colors_mode = _check_colors_mode(colors_mode)
     if input_path is None and data is None:
         raise VectorizeError("input_path or data required")
 
@@ -51,15 +62,16 @@ def vectorize_to_svg(
                 if not source.is_file():
                     raise VectorizeError(f"input not found: {source}")
 
-            _path, palette, _mode = prepare_for_trace(source, colors, prepared)
-            # Lower speckle filter so thin second-color strokes survive (e.g. black+red)
+            _path, palette, _mode = prepare_for_trace(
+                source, colors, prepared, colors_mode=colors_mode
+            )
             run_vtracer(
                 prepared,
                 svg_tmp,
                 filter_speckle=max(2, VTRACER_FILTER_SPECKLE // 2),
                 color_precision=8,
             )
-            svg_text = finalize_svg(svg_tmp)
+            svg_text = finalize_svg(svg_tmp, geom=geom)
             return svg_text, palette
     except (PreprocessError, TracerError) as exc:
         raise VectorizeError(str(exc)) from exc
@@ -69,19 +81,23 @@ def vectorize_file(
     input_path: Path | str,
     *,
     colors: int = DEFAULT_COLORS,
+    colors_mode: str = COLORS_MODE_UP_TO,
     output_path: Path | str | None = None,
     fmt: str = "pdf",
+    geom: str = "off",
 ) -> Path:
-    """
-    Vectorize image file → PDF (default) or SVG.
-    Returns path to written file.
-    """
+    """Vectorize image file → PDF (default) or SVG."""
     fmt = fmt.lower().strip()
     if fmt not in ("pdf", "svg"):
         raise VectorizeError("fmt must be 'pdf' or 'svg'")
 
     input_path = Path(input_path)
-    svg_text, _palette = vectorize_to_svg(input_path=input_path, colors=colors)
+    svg_text, _palette = vectorize_to_svg(
+        input_path=input_path,
+        colors=colors,
+        colors_mode=colors_mode,
+        geom=geom,
+    )
 
     if output_path is None:
         output_path = input_path.with_suffix(f".{fmt}")
@@ -104,8 +120,10 @@ def vectorize_bytes(
     data: bytes,
     *,
     colors: int = DEFAULT_COLORS,
+    colors_mode: str = COLORS_MODE_UP_TO,
     filename_hint: str = "upload.png",
     fmt: str = "pdf",
+    geom: str = "off",
 ) -> bytes:
     """Vectorize raw bytes → PDF or SVG bytes."""
     fmt = fmt.lower().strip()
@@ -115,7 +133,11 @@ def vectorize_bytes(
         raise VectorizeError("empty image payload")
 
     svg_text, _palette = vectorize_to_svg(
-        data=data, colors=colors, filename_hint=filename_hint
+        data=data,
+        colors=colors,
+        colors_mode=colors_mode,
+        filename_hint=filename_hint,
+        geom=geom,
     )
     if fmt == "svg":
         return svg_text.encode("utf-8")
@@ -123,9 +145,3 @@ def vectorize_bytes(
         return svg_to_pdf_bytes(svg_text)
     except PdfError as exc:
         raise VectorizeError(str(exc)) from exc
-
-
-# Back-compat alias used in older tests: returns SVG string
-def vectorize_file_svg_string(input_path: Path | str, *, colors: int = DEFAULT_COLORS) -> str:
-    svg, _ = vectorize_to_svg(input_path=input_path, colors=colors)
-    return svg
