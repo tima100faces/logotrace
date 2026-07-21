@@ -14,6 +14,13 @@ NEAR_WHITE_MIN = 230
 # (field color is part of the logo, not disposable paper).
 PAPER_WHITE_FRACTION = 0.22
 MERGE_DIST2 = 35**2
+# Cluster is "major" (peer brand color) if it has at least this fraction of ink pixels.
+MIN_MAJOR_MASS = 0.03
+# Dust below this absolute count (on downsampled ink) always eligible to merge.
+MIN_ABSOLUTE_COUNT = 8
+
+COLORS_MODE_UP_TO = "up_to"
+COLORS_MODE_EXACT = "exact"
 
 
 def _dist2(a: tuple[int, int, int], b: tuple[int, int, int]) -> int:
@@ -61,14 +68,15 @@ def _bucket(rgb: tuple[int, int, int], bits: int = 4) -> tuple[int, int, int]:
     return (rgb[0] >> shift, rgb[1] >> shift, rgb[2] >> shift)
 
 
-def _select_from_pixels(
-    ink: np.ndarray,
-    max_colors: int,
-) -> list[tuple[int, int, int]]:
-    """Greedy distinct centers from Nx3 int array."""
-    if ink.size == 0:
-        return [(0, 0, 0)]
+@dataclass
+class _Cluster:
+    center: tuple[int, int, int]
+    count: int
 
+
+def _build_clusters(ink: np.ndarray) -> list[_Cluster]:
+    if ink.size == 0:
+        return []
     buckets: Counter[tuple[int, int, int]] = Counter()
     bucket_sums: dict[tuple[int, int, int], list[int]] = {}
     for px in ink:
@@ -82,18 +90,105 @@ def _select_from_pixels(
         s[1] += t[1]
         s[2] += t[2]
         s[3] += 1
-
-    selected: list[tuple[int, int, int]] = []
+    out: list[_Cluster] = []
     for b, _cnt in buckets.most_common():
         s = bucket_sums[b]
         n = s[3]
-        center = (s[0] // n, s[1] // n, s[2] // n)
-        if any(_dist2(center, prev) <= MERGE_DIST2 for prev in selected):
+        out.append(_Cluster(center=(s[0] // n, s[1] // n, s[2] // n), count=n))
+    return out
+
+
+def _mass_aware_select(
+    clusters: list[_Cluster],
+    max_colors: int,
+    colors_mode: str = COLORS_MODE_UP_TO,
+) -> list[tuple[int, int, int]]:
+    """
+    Pick palette colors with mass-aware merge:
+    - dust (low mass) may merge into nearest major color when close
+    - two major peers are never merged even if close (protects near brand hues)
+    - up_to: return 1..max_colors majors (+ leftover dust folded away)
+    - exact: collapse to exactly max_colors by folding weakest into nearest kept
+      (if fewer majors exist than N, return fewer — do not invent colors)
+    """
+    if not clusters:
+        return [(0, 0, 0)]
+    colors_mode = colors_mode if colors_mode in (COLORS_MODE_UP_TO, COLORS_MODE_EXACT) else COLORS_MODE_UP_TO
+    total = sum(c.count for c in clusters) or 1
+    # sort by mass desc
+    ordered = sorted(clusters, key=lambda c: c.count, reverse=True)
+
+    def is_major(c: _Cluster) -> bool:
+        return c.count >= MIN_ABSOLUTE_COUNT and (c.count / total) >= MIN_MAJOR_MASS
+
+    # Pass 1: keep majors that are not dust-merged; dust goes to nearest selected major if close
+    selected: list[_Cluster] = []
+    dust: list[_Cluster] = []
+
+    for cl in ordered:
+        if not is_major(cl):
+            dust.append(cl)
             continue
-        selected.append(center)
-        if len(selected) >= max_colors:
-            break
-    return selected or [(0, 0, 0)]
+        # Extremely close centers (same paint, bucket jitter) → absorb
+        ultra = [s for s in selected if _dist2(cl.center, s.center) <= 12**2]
+        if ultra:
+            nearest = min(ultra, key=lambda s: _dist2(cl.center, s.center))
+            nearest.count += cl.count
+            continue
+        # Two major peers stay separate even when moderately close (near brand hues)
+        selected.append(_Cluster(center=cl.center, count=cl.count))
+
+    # Fold dust into nearest selected if close; else keep as minor candidate
+    minors: list[_Cluster] = []
+    for d in dust:
+        if selected:
+            nearest = min(selected, key=lambda s: _dist2(d.center, s.center))
+            if _dist2(d.center, nearest.center) <= MERGE_DIST2:
+                nearest.count += d.count
+                continue
+        minors.append(d)
+
+    # Candidates = majors first, then remaining minors by mass
+    candidates = sorted(selected + minors, key=lambda c: c.count, reverse=True)
+    if not candidates:
+        return [(0, 0, 0)]
+
+    if colors_mode == COLORS_MODE_EXACT:
+        # Keep top max_colors by mass; fold the rest into nearest kept
+        kept = candidates[:max_colors]
+        rest = candidates[max_colors:]
+        for r in rest:
+            nearest = min(kept, key=lambda s: _dist2(r.center, s.center))
+            nearest.count += r.count
+        return [c.center for c in kept]
+
+    # up_to: take majors first up to max_colors; fill with minors only if room
+    majors = [c for c in candidates if is_major(c) or c in selected]
+    # recompute major on updated counts
+    majors = [c for c in candidates if c.count >= MIN_ABSOLUTE_COUNT and (c.count / total) >= MIN_MAJOR_MASS]
+    if not majors:
+        majors = candidates[:1]
+    picked = majors[:max_colors]
+    if len(picked) < max_colors:
+        for c in candidates:
+            if c in picked:
+                continue
+            if any(_dist2(c.center, p.center) <= MERGE_DIST2 for p in picked):
+                continue
+            picked.append(c)
+            if len(picked) >= max_colors:
+                break
+    return [c.center for c in picked] or [(0, 0, 0)]
+
+
+def _select_from_pixels(
+    ink: np.ndarray,
+    max_colors: int,
+    colors_mode: str = COLORS_MODE_UP_TO,
+) -> list[tuple[int, int, int]]:
+    """Mass-aware palette from Nx3 ink pixels."""
+    clusters = _build_clusters(ink)
+    return _mass_aware_select(clusters, max_colors, colors_mode=colors_mode)
 
 
 @dataclass(frozen=True)
@@ -102,21 +197,27 @@ class PaletteResult:
     mode: str  # "paper" | "fullbleed"
     background: tuple[int, int, int]
     white_fraction: float
+    colors_mode: str = COLORS_MODE_UP_TO
 
 
 def analyze_palette(
     img: Image.Image,
     max_colors: int,
+    colors_mode: str = COLORS_MODE_UP_TO,
 ) -> PaletteResult:
     """
-    Extract up to max_colors brand colors.
+    Extract brand colors (up_to or exact N ink colors).
 
     paper: lots of near-white → drop paper/bg, keep ink only
     fullbleed: brand field fills frame → keep field color in palette;
                only pure near-white becomes print white
+
+    Mass-aware merge: dust folds into majors; two major peers never merge.
     """
     if max_colors < 1:
         raise ValueError("max_colors must be >= 1")
+    if colors_mode not in (COLORS_MODE_UP_TO, COLORS_MODE_EXACT):
+        raise ValueError(f"colors_mode must be up_to|exact, got {colors_mode!r}")
 
     rgb = img.convert("RGB")
     w, h = rgb.size
@@ -147,18 +248,20 @@ def analyze_palette(
         ink_mask = (~near_white) & (d_bg > BG_DIST2)
         ink = flat[ink_mask]
         mode = "paper"
-        colors = _select_from_pixels(ink, max_colors)
         if ink.size == 0:
-            colors = _select_from_pixels(flat[~near_white], max_colors)
+            ink = flat[~near_white]
+        colors = _select_from_pixels(ink, max_colors, colors_mode=colors_mode)
     else:
-        # full-bleed: all non-trivial colors, including field (border) color
         ink = flat[~near_white] if near_white.any() else flat
         mode = "fullbleed"
-        colors = _select_from_pixels(ink, max_colors)
-        # ensure border/field color is present if distinct
+        colors = _select_from_pixels(ink, max_colors, colors_mode=colors_mode)
+        # ensure border/field color is present if distinct major
         if not any(_dist2(bg, c) <= MERGE_DIST2 for c in colors) and not _is_near_white(bg):
             colors = [bg] + [c for c in colors if _dist2(c, bg) > MERGE_DIST2]
-            colors = colors[:max_colors]
+            if colors_mode == COLORS_MODE_EXACT:
+                colors = colors[:max_colors]
+            else:
+                colors = colors[:max_colors]
 
     if not colors:
         colors = [(0, 0, 0)]
@@ -168,6 +271,7 @@ def analyze_palette(
         mode=mode,
         background=bg,
         white_fraction=white_fraction,
+        colors_mode=colors_mode,
     )
 
 

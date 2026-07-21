@@ -3,8 +3,15 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from src.colors import extract_logo_colors, remap_to_palette
+from src.colors import (
+    COLORS_MODE_EXACT,
+    COLORS_MODE_UP_TO,
+    analyze_palette,
+    extract_logo_colors,
+    remap_to_palette,
+)
 from src.config import DEFAULT_COLORS
+from src.geometry import GEOM_BASIC, normalize_svg_geometry
 from src.pipeline import VectorizeError, vectorize_bytes, vectorize_file, vectorize_to_svg
 from src.tracer_vtracer import resolve_vtracer_bin
 
@@ -51,9 +58,40 @@ def test_extract_two_colors_on_white():
             img.putpixel((x, y), (20, 20, 20))
     pal = extract_logo_colors(img, max_colors=4)
     assert len(pal) >= 2
-    # should include something reddish and something dark
     assert any(r > 150 and g < 100 for r, g, b in pal)
     assert any(r < 80 and g < 80 and b < 80 for r, g, b in pal)
+
+
+def test_exact_mode_collapses_to_n():
+    img = Image.new("RGB", (120, 80), (255, 255, 255))
+    # three ink blobs
+    for x in range(5, 35):
+        for y in range(5, 75):
+            img.putpixel((x, y), (200, 20, 20))
+    for x in range(40, 70):
+        for y in range(5, 75):
+            img.putpixel((x, y), (20, 20, 20))
+    for x in range(75, 110):
+        for y in range(5, 75):
+            img.putpixel((x, y), (20, 180, 40))
+    up = analyze_palette(img, 4, colors_mode=COLORS_MODE_UP_TO)
+    ex = analyze_palette(img, 2, colors_mode=COLORS_MODE_EXACT)
+    assert len(up.colors) >= 2
+    assert len(ex.colors) == 2
+
+
+def test_mass_aware_keeps_two_close_majors():
+    """Two large regions with close hues must both survive (not dust-merge)."""
+    img = Image.new("RGB", (100, 60), (255, 255, 255))
+    # two big blocks, moderately close greens
+    for x in range(5, 45):
+        for y in range(5, 55):
+            img.putpixel((x, y), (40, 100, 50))
+    for x in range(55, 95):
+        for y in range(5, 55):
+            img.putpixel((x, y), (55, 120, 70))
+    pal = analyze_palette(img, 4, colors_mode=COLORS_MODE_UP_TO).colors
+    assert len(pal) >= 2
 
 
 def test_remap_keeps_palette(tiny_logo: Path):
@@ -63,8 +101,21 @@ def test_remap_keeps_palette(tiny_logo: Path):
     assert out.mode in ("RGB", "RGBA")
 
 
+def test_geom_basic_reduces_nodes():
+    # wavy almost-line path
+    d = "M 0 0 " + " ".join(
+        f"C {i+1} {0.2 if i % 2 else -0.2} {i+2} {0.2 if i % 2 else -0.2} {i+3} 0"
+        for i in range(0, 30, 3)
+    )
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg"><path d="{d}" fill="#000"/></svg>'
+    out = normalize_svg_geometry(svg, level=GEOM_BASIC)
+    assert "<path" in out
+    # should prefer L commands after normalize
+    assert "L " in out or "l " in out.lower() or out.count("C") < svg.count("C")
+
+
 def test_vectorize_svg_string(tiny_logo: Path):
-    svg, pal = vectorize_to_svg(input_path=tiny_logo, colors=2)
+    svg, pal = vectorize_to_svg(input_path=tiny_logo, colors=2, geom=GEOM_BASIC)
     assert "<svg" in svg.lower()
     assert "</svg>" in svg.lower()
     assert len(pal) >= 1
@@ -72,14 +123,13 @@ def test_vectorize_svg_string(tiny_logo: Path):
 
 def test_vectorize_file_pdf(tiny_logo: Path, tmp_path: Path):
     out = tmp_path / "out.pdf"
-    path = vectorize_file(tiny_logo, colors=2, output_path=out, fmt="pdf")
+    path = vectorize_file(tiny_logo, colors=2, output_path=out, fmt="pdf", geom=GEOM_BASIC)
     assert path == out
-    data = out.read_bytes()
-    assert data.startswith(b"%PDF")
+    assert out.read_bytes().startswith(b"%PDF")
 
 
 def test_vectorize_bytes_pdf(tiny_logo: Path):
-    data = vectorize_bytes(tiny_logo.read_bytes(), colors=2, fmt="pdf")
+    data = vectorize_bytes(tiny_logo.read_bytes(), colors=2, fmt="pdf", geom="off")
     assert data.startswith(b"%PDF")
 
 
@@ -90,17 +140,15 @@ def test_vectorize_bad_colors(tiny_logo: Path):
 
 @pytest.mark.parametrize("name", ["sample_06.jpg", "sample_07.jpg"])
 def test_multi_color_samples_keep_multiple_fills(name: str, tmp_path: Path):
-    """Problem cases: should not collapse to a single ink fill."""
     import re
 
     src = SAMPLES / name
     if not src.is_file():
         pytest.skip("sample missing")
     svg_path = tmp_path / f"{name}.svg"
-    vectorize_file(src, colors=4, output_path=svg_path, fmt="svg")
+    vectorize_file(src, colors=4, output_path=svg_path, fmt="svg", geom=GEOM_BASIC)
     svg = svg_path.read_text(encoding="utf-8")
     fills = set(re.findall(r'fill="(#[0-9A-Fa-f]{6})"', svg, flags=re.I))
-    # drop near-white fills
     ink = []
     for f in fills:
         h = f.lstrip("#")

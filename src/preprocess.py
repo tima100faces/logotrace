@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from src.colors import analyze_palette, remap_to_palette
+from src.colors import COLORS_MODE_UP_TO, analyze_palette, remap_to_palette
 from src.config import MAX_COLORS, MIN_COLORS
 
 
@@ -61,17 +61,19 @@ def prepare_for_trace(
     source: Path | bytes | Image.Image,
     max_colors: int,
     dest_path: Path,
+    *,
+    colors_mode: str = COLORS_MODE_UP_TO,
 ) -> tuple[Path, list[tuple[int, int, int]], str]:
     """
     Extract brand palette from original, remap, write PNG for tracer.
 
-    Returns (png_path, palette_rgb, mode).
+    Returns (png_path, palette_rgb, paper_mode).
     """
     max_colors = _validate_colors(max_colors)
     img = load_image(source)
     keep_alpha = has_meaningful_alpha(img)
 
-    analysis = analyze_palette(img, max_colors)
+    analysis = analyze_palette(img, max_colors, colors_mode=colors_mode)
     prepared = remap_to_palette(
         img,
         analysis.colors,
