@@ -1,7 +1,7 @@
 # Variant Comparison
 
 **Samples:** 9
-**Date:** 2026-07-21
+**Date:** 2026-07-22
 
 ## IoU aw
 
@@ -49,15 +49,15 @@
 
 | Sample | vtracer+upscale | vtracer+upscale+fit |
 |--------|--------|--------|
-| `sample_01` | 3.7 | 7.1 |
-| `sample_02` | 1.7 | 3.3 |
-| `sample_03` | 2.4 | 4.2 |
-| `sample_04` | 2.8 | 9.2 |
-| `sample_05` | 6.0 | 6.5 |
-| `sample_06` | 5.2 | 5.3 |
-| `sample_07` | 5.2 | 5.4 |
-| `sample_08` | 2.1 | 6.4 |
-| `sample_09` | 0.6 | 0.7 |
+| `sample_01` | 5.6 | 7.3 |
+| `sample_02` | 1.9 | 3.4 |
+| `sample_03` | 2.5 | 4.3 |
+| `sample_04` | 3.0 | 9.8 |
+| `sample_05` | 6.3 | 6.4 |
+| `sample_06` | 5.1 | 5.2 |
+| `sample_07` | 4.5 | 5.2 |
+| `sample_08` | 2.1 | 4.9 |
+| `sample_09` | 0.6 | 0.8 |
 
 ## Aggregate (mean across samples)
 
@@ -68,4 +68,4 @@
 | Chamfer | 0.24 | 0.27 |
 | Nodes | 3443 | 3443 |
 | SVG KB | 114.8 | 151.9 |
-| Time (s) | 3.3 | 5.3 |
+| Time (s) | 3.5 | 5.3 |

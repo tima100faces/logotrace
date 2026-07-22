@@ -277,9 +277,18 @@ def _shape_iou(a: np.ndarray, b: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 
 TOL_LINE = 0.35
+MIN_CHAIN_CHORD = 5.0  # source-px: chain converts to line only if chord >= this
 
 
 def _pass1_line_detect(shapes: list[PathShape], cw: int, ch: int) -> dict[str, int]:
+    """Collapse near-straight cubic chains into single line segments.
+
+    A chain of consecutive cubics converts to a line ONLY if:
+      - total chord length >= MIN_CHAIN_CHORD (5 source-px)
+      - max deviation of any control point from the chord < TOL_LINE (0.35px)
+
+    Individual short cubics are NEVER converted — only chains of 2+ cubics.
+    """
     stats = {"lines_merged": 0, "shapes_changed": 0, "reverts": 0}
     for shape in shapes:
         segs = shape.segs
@@ -293,28 +302,33 @@ def _pass1_line_detect(shapes: list[PathShape], cw: int, ch: int) -> dict[str, i
         while i < n:
             seg = segs[i]
             if isinstance(seg, SegCubic):
+                # Collect consecutive cubics into a chain
                 chain_start = i
                 chain: list[SegCubic] = [seg]
                 j = i + 1
                 while j < n and isinstance(segs[j], SegCubic):
                     chain.append(segs[j])
                     j += 1
+
                 if len(chain) >= 2:
+                    # Check chain for straightness
                     sx, sy = _seg_start(segs, chain_start)
                     ex, ey = chain[-1].x3, chain[-1].y3
                     chord_len = math.hypot(ex - sx, ey - sy)
-                    if chord_len > 1.0:
+
+                    if chord_len >= MIN_CHAIN_CHORD:
                         max_dev = 0.0
                         for c in chain:
                             max_dev = max(max_dev, _point_line_dist(c.x1, c.y1, sx, sy, ex, ey))
                             max_dev = max(max_dev, _point_line_dist(c.x2, c.y2, sx, sy, ex, ey))
-                            max_dev = max(max_dev, _point_line_dist(c.x3, c.y3, sx, sy, ex, ey))
                         if max_dev < TOL_LINE:
                             new_segs.append(SegLine(ex, ey))
                             changed = True
                             stats["lines_merged"] += len(chain)
                             i = j
                             continue
+
+                # Individual short cubics or non-straight chain — keep as-is
                 for c in chain:
                     new_segs.append(c)
                 i = j
