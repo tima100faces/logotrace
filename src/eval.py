@@ -38,14 +38,30 @@ from src.verify import rasterize_svg
 # ---------------------------------------------------------------------------
 
 def _binarize(arr: np.ndarray, palette: list[tuple[int, int, int]]) -> np.ndarray:
+    """Tile-based binarization: avoids full-frame N×K float stacks for large images."""
     pal = np.array(palette, dtype=np.int32)
-    flat = arr.reshape(-1, 3).astype(np.int64)
-    a2 = np.sum(flat**2, axis=1, keepdims=True)
-    b2 = np.sum(pal.astype(np.int64) ** 2, axis=1)[None, :]
-    ab = flat @ pal.astype(np.int64).T
-    d2 = a2 + b2 - 2 * ab
-    nearest_idx = np.argmin(d2, axis=1)
-    return pal[nearest_idx].reshape(arr.shape).astype(np.uint8)
+    h, w = arr.shape[:2]
+    out = np.zeros((h, w, 3), dtype=np.uint8)
+
+    # Precompute palette squared norms (shared across tiles)
+    b2 = np.sum(pal.astype(np.int64) ** 2, axis=1)  # [K]
+
+    # Tile size: ~1M pixels per batch, but at least one full row
+    TILE_PX = 1_048_576
+    tile_rows = max(1, TILE_PX // max(w, 1))
+
+    for y0 in range(0, h, tile_rows):
+        y1 = min(y0 + tile_rows, h)
+        tile = arr[y0:y1, :, :]
+        tile_h = y1 - y0
+        flat = tile.reshape(-1, 3).astype(np.int64)  # [N, 3]
+        a2 = np.sum(flat ** 2, axis=1)               # [N]
+        ab = flat @ pal.astype(np.int64).T            # [N, K]
+        d2 = a2[:, None] + b2[None, :] - 2 * ab       # [N, K]
+        nearest_idx = np.argmin(d2, axis=1)
+        out[y0:y1, :, :] = pal[nearest_idx].reshape(tile_h, w, 3)
+
+    return out
 
 
 # ---------------------------------------------------------------------------
