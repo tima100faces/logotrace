@@ -137,4 +137,3 @@ See `docs/DECISIONS.md` ADR-1…21 and `docs/QA-NOTES.md`.
 | Quality (user) | ~4–4.5/5 flat logos; complex labels — open problem #1 |
 | Baseline | v4, 10 samples, IoU aw 0.9335 (see EVAL-BASELINE.md) |
 | Tests | pytest green |
-</content>
