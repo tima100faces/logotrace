@@ -266,13 +266,14 @@ def _hue_deg(rgb: tuple[int, int, int]) -> float:
 def collapse_gradient_ramps(
     colors: list[tuple[int, int, int]],
     max_colors: int,
+    counts: dict[tuple[int, int, int], int] | None = None,
 ) -> list[tuple[int, int, int]]:
-    """
-    Crush JPEG/gradient steps while keeping distinct brand hues.
+    """Crush JPEG/gradient steps while keeping distinct brand hues.
 
-    - Near-grays (low saturation): keep a single darkest ink (banding → one fill)
-    - Same-hue lightness ramps: keep one anchor (highest chroma, else darkest)
-    - Different hues stay separate
+    - Near-grays (low saturation): keep one anchor — highest mass,
+      fallback to median lightness (not darkest — white must survive).
+    - Same-hue lightness ramps: keep one anchor (highest chroma).
+    - Different hues stay separate.
     """
     if not colors:
         return [(0, 0, 0)]
@@ -289,7 +290,14 @@ def collapse_gradient_ramps(
 
     out: list[tuple[int, int, int]] = []
     if grays:
-        out.append(min(grays, key=_lightness))
+        if counts:
+            # Prefer the gray with the most mass (e.g. white, not edge-mix)
+            anchor = max(grays, key=lambda c: counts.get(c, 0))
+        else:
+            # No mass data — use median lightness as neutral fallback
+            sorted_grays = sorted(grays, key=_lightness)
+            anchor = sorted_grays[len(sorted_grays) // 2]
+        out.append(anchor)
 
     chroma_sorted = sorted(chroma, key=_hue_deg)
     buckets: list[list[tuple[int, int, int]]] = []
@@ -343,9 +351,12 @@ def _select_from_pixels(
     if colors_mode == COLORS_MODE_EXACT:
         return _mass_aware_select(clusters, max_colors, colors_mode=COLORS_MODE_EXACT)
 
+    # Build color → count map for mass-weighted gray anchor
+    color_counts: dict[tuple[int, int, int], int] = {c.center: c.count for c in clusters}
+
     wide_n = max(max_colors * 4, max_colors + 2)
     wide = _mass_aware_select(clusters, wide_n, colors_mode=COLORS_MODE_UP_TO)
-    collapsed = collapse_gradient_ramps(wide, max_colors=max_colors)
+    collapsed = collapse_gradient_ramps(wide, max_colors=max_colors, counts=color_counts)
     if len(collapsed) > max_colors:
         collapsed = collapsed[:max_colors]
     return collapsed or [(0, 0, 0)]
