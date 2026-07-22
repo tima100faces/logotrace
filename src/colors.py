@@ -21,7 +21,7 @@ COLORS_MODE_EXACT = "exact"
 COLORS_MODE_AUTO = "auto"
 
 # Gradient collapse: low-saturation chain → one ink; same-hue L-ramp → one anchor
-GRAY_SAT_MAX = 0.16
+GRAY_SAT_MAX = 0.14
 HUE_BUCKET_DEG = 28.0
 
 
@@ -263,6 +263,43 @@ def _hue_deg(rgb: tuple[int, int, int]) -> float:
     return h
 
 
+def _hsl_distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    """Weighted perceptual distance in HSL space. Lightness weight >= hue weight.
+
+    Normalised dimensions: ΔL/255, ΔS∈[0,1], ΔH/180.
+    Weights: L=2, S=1, H=1. Returns Euclidean distance in weighted space.
+    """
+    w_l, w_s, w_h = 2.0, 1.0, 1.0
+    dl = abs(_lightness(a) - _lightness(b)) / 255.0
+    ds = abs(_saturation(a) - _saturation(b))
+    dh = abs(_hue_deg(a) - _hue_deg(b))
+    dh = min(dh, 360.0 - dh) / 180.0
+    return ((w_l * dl) ** 2 + (w_s * ds) ** 2 + (w_h * dh) ** 2) ** 0.5
+
+
+def _merge_by_hsl_distance(
+    clusters: list[_Cluster],
+    threshold: float,
+) -> list[_Cluster]:
+    """Merge clusters whose centers are within *threshold* weighted-HSL distance.
+
+    Sorted by mass desc — higher-mass clusters become anchors.
+    Merged clusters absorb counts of later clusters.
+    """
+    ordered = sorted(clusters, key=lambda c: c.count, reverse=True)
+    kept: list[_Cluster] = []
+    for cl in ordered:
+        merged = False
+        for k in kept:
+            if _hsl_distance(cl.center, k.center) <= threshold:
+                k.count += cl.count
+                merged = True
+                break
+        if not merged:
+            kept.append(_Cluster(center=cl.center, count=cl.count))
+    return kept
+
+
 def collapse_gradient_ramps(
     colors: list[tuple[int, int, int]],
     max_colors: int,
@@ -338,47 +375,120 @@ def collapse_gradient_ramps(
     return out or list(colors[:1])
 
 
+def _gradient_crush_protected(
+    survivors: list[_Cluster],
+    counts: dict[tuple[int, int, int], int],
+) -> list[tuple[int, int, int]]:
+    """Gradient crush on survivors: gray collapse + hue-bucket ramp collapse.
+
+    Key differences from collapse_gradient_ramps:
+    - NO truncation — every distinct hue survives.
+    - Lightness guard inside hue buckets (ΔL/255 ≤ 0.10) prevents merging
+      two colors that happen to share hue but are at very different
+      lightness levels (e.g. light-blue vs dark-blue miles apart).
+    """
+    colors = [s.center for s in survivors]
+    if not colors:
+        return [(0, 0, 0)]
+    if len(colors) == 1:
+        return list(colors)
+
+    grays: list[tuple[int, int, int]] = []
+    chroma: list[tuple[int, int, int]] = []
+    for c in colors:
+        if _saturation(c) <= GRAY_SAT_MAX:
+            grays.append(c)
+        else:
+            chroma.append(c)
+
+    out: list[tuple[int, int, int]] = []
+    if grays:
+        # Keep one gray — highest mass
+        anchor = max(grays, key=lambda c: counts.get(c, 0))
+        out.append(anchor)
+
+    # Hue bucketing with lightness guard AND HSL distance check.
+    # Only merge colors that step 2 already considered the same group —
+    # prevents gradient crush from re-merging distinct colors.
+    MERGE_HSL_THRESHOLD = 0.18  # must match _select_from_pixels step 2
+    chroma_sorted = sorted(chroma, key=_hue_deg)
+    buckets: list[list[tuple[int, int, int]]] = []
+    for c in chroma_sorted:
+        h = _hue_deg(c)
+        placed = False
+        for bucket in buckets:
+            bh = _hue_deg(bucket[0])
+            dh = abs(h - bh)
+            dh = min(dh, 360.0 - dh)
+            if dh <= HUE_BUCKET_DEG and _hsl_distance(c, bucket[0]) <= MERGE_HSL_THRESHOLD:
+                bucket.append(c)
+                placed = True
+                break
+        if not placed:
+            buckets.append([c])
+
+    for bucket in buckets:
+        anchor = max(bucket, key=lambda c: (_saturation(c), -_lightness(c)))
+        out.append(anchor)
+
+    # Dedup extremely close centers
+    deduped: list[tuple[int, int, int]] = []
+    for c in out:
+        if any(_dist2(c, d) <= 12**2 for d in deduped):
+            continue
+        deduped.append(c)
+
+    # NO TRUNCATION — all distinct hues stay
+    return deduped or list(colors[:1])
+
+
 def _select_from_pixels(
     ink: np.ndarray,
     max_colors: int,
     colors_mode: str = COLORS_MODE_UP_TO,
 ) -> list[tuple[int, int, int]]:
-    """
-    Mass-aware palette from ink pixels.
+    """Palette from ink pixels.
 
-    up_to (auto): wide candidates → gradient crush → ≤ max_colors.
-    When max_colors > 4 (auto-N), skip gradient crush — mass-aware selection
-    already preserves distinct hues.
-    exact (manual K): top-K by mass, NO gradient crush — dual gray etc. survive
+    auto (COLORS_MODE_UP_TO):
+      1. Candidates by mass (≥ 3 % of dominant cluster).
+      2. Merge by full-color HSL distance — never by hue alone.
+      3. N = survivors, bounds 1..8.
+      4. Gradient crush on survivors: gray collapse + hue-bucket ramp
+         collapse with lightness guard. Never drops mass colors.
+         No truncation — every distinct hue stays.
+    exact (COLORS_MODE_EXACT):
+      Top-K by mass, no gradient crush — dual gray etc. survive.
     """
     clusters = _build_clusters(ink)
+    if not clusters:
+        return [(0, 0, 0)]
+
     if colors_mode == COLORS_MODE_EXACT:
         return _mass_aware_select(clusters, max_colors, colors_mode=COLORS_MODE_EXACT)
 
-    # Build color → count map for mass-weighted gray anchor
+    # ---------- AUTO mode ----------
     color_counts: dict[tuple[int, int, int], int] = {c.center: c.count for c in clusters}
 
-    wide_n = max(max(4, max_colors) * 4, max(4, max_colors) + 2)
-    wide = _mass_aware_select(clusters, wide_n, colors_mode=COLORS_MODE_UP_TO)
-    collapsed = collapse_gradient_ramps(wide, max_colors=min(4, max_colors), counts=color_counts)
+    # Step 1: candidates by mass — keep clusters ≥ 3 % of dominant cluster
+    top_mass = max(c.count for c in clusters)
+    mass_threshold = max(top_mass * 0.03, MIN_ABSOLUTE_COUNT)
+    candidates = [c for c in clusters if c.count >= mass_threshold]
+    if not candidates:
+        candidates = clusters[:1]
 
-    # Add-back: when auto-N > number crushed AND the palette is chromatically
-    # diverse (≥ 40° hue spread), recover mass clusters lost by hue bucketing.
-    # Cap at +2 colors. Simple/single-hue logos stay clean.
-    if max_colors > len(collapsed) and colors_mode == COLORS_MODE_UP_TO:
-        hues = [_hue_deg(c) for c in wide if _saturation(c) > GRAY_SAT_MAX]
-        hue_spread = max(hues) - min(hues) if len(hues) >= 2 else 0
-        if hue_spread >= 40:
-            add_limit = len(collapsed) + 2
-            mass_colors = _mass_aware_select(clusters, 16, colors_mode=COLORS_MODE_UP_TO)
-            for c in mass_colors:
-                if len(collapsed) >= min(max_colors, add_limit):
-                    break
-                if all(_dist2(c, existing) > MERGE_DIST2 for existing in collapsed):
-                    collapsed.append(c)
-    if len(collapsed) > max_colors:
-        collapsed = collapsed[:max_colors]
-    return collapsed or [(0, 0, 0)]
+    # Step 2: merge by weighted HSL distance — never by hue alone
+    MERGE_HSL_THRESHOLD = 0.18
+    merged = _merge_by_hsl_distance(candidates, MERGE_HSL_THRESHOLD)
+
+    # Step 3: N = surviving count, bounds 1..8
+    merged = sorted(merged, key=lambda c: c.count, reverse=True)
+    n_survivors = max(1, min(len(merged), 8))
+    survivors = merged[:n_survivors]
+
+    # Step 4: gradient crush — merges ramps, NEVER drops mass colors
+    colors = _gradient_crush_protected(survivors, color_counts)
+
+    return colors or [(0, 0, 0)]
 
 
 # Guard: if crush produced a single fill for a multi-color image,
@@ -455,16 +565,9 @@ def analyze_palette(
             colors_mode=colors_mode,
         )
 
-    # Auto-N: dynamic palette size from cluster mass distribution
-    # Keep clusters with mass ≥ 3% of dominant cluster. Hard bounds 1..6.
-    if colors_mode == COLORS_MODE_UP_TO:
-        clusters = _build_clusters(ink)
-        sorted_masses = sorted([c.count for c in clusters], reverse=True)
-        top_mass = sorted_masses[0] if sorted_masses else 0
-        threshold = max(top_mass * 0.03, 1)
-        n = sum(1 for m in sorted_masses if m >= threshold)
-        max_colors = max(1, min(n, 6))
-
+    # New auto pipeline (mass → hsl-merge → bound → crush).
+    # _select_from_pixels determines N dynamically from the data.
+    # For exact mode, max_colors is the user-requested K.
     colors = _select_from_pixels(ink, max_colors, colors_mode=colors_mode)
 
     # Bimodal guard: if gradient crush collapsed a multi-color image to
@@ -501,8 +604,11 @@ def analyze_palette(
     for c in colors:
         if _dist2(c, bg) > MERGE_DIST2:
             palette.append(c)
-    # Trim to bg + max_colors
-    palette = palette[:max_colors + 1]
+    # Trim to bg + max_colors.
+    # In auto mode the pipeline already bounds N to 1..8,
+    # but we still guard against unexpected overflow.
+    cap = max_colors if colors_mode == COLORS_MODE_EXACT else max(max_colors, len(colors))
+    palette = palette[:cap + 1]
 
     return PaletteResult(
         colors=palette,
