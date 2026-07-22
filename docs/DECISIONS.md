@@ -76,12 +76,12 @@
 
 ## ADR-8: Palette = Auto (up_to) / Manual K (exact)
 
-**Status:** Accepted (updated 2026-07-21)  
+**Status:** Accepted (auto-mode selection superseded by ADR-23, 2026-07-22)  
 **Date:** 2026-07-21
 
 **Decision:**
-- Default: `palette=auto` → up_to 4 + gradient crush
-- Manual: `palette=N` → exact N, **no crush** (dual gray survives)
+- Default: `palette=auto` → up_to 4 + gradient crush *(auto mode now: unified auto-N per ADR-23)*
+- Manual: `palette=N` → exact N, **no crush** (dual gray survives) — unchanged
 - API contract: `resolve_palette_policy()` + response headers
 
 ---
@@ -94,10 +94,10 @@
 
 ## ADR-10: gradient crush for low-sat same-hue ramps
 
-**Status:** Accepted  
+**Status:** Accepted (anchor rule updated by ADR-22; drop rules constrained by ADR-23)  
 **Date:** 2026-07-21
 
-Gray ramps collapse to single darkest ink. Distinct hues kept. Active only in `up_to` mode; manual exact K bypasses crush.
+Gray ramps collapse to single ink. Distinct hues kept. Active only in auto mode; manual exact K bypasses crush. Anchor = dominant cluster by MASS (ADR-22), not darkest. Crush may never drop a color whose mass exceeds the candidate threshold (ADR-23).
 
 ---
 
@@ -133,7 +133,7 @@ Major peers (≥3% ink) never merge unless ultra-close. Dust folds into nearest 
 
 ## ADR-15: Web UI — light, static, pdf.js canvas preview
 
-**Status:** Accepted  
+**Status:** Accepted (palette control extended to Auto|1–8, 2026-07-22)  
 **Date:** 2026-07-21
 
 - Single page HTML/CSS/JS, served by FastAPI mount
@@ -141,7 +141,7 @@ Major peers (≥3% ink) never merge unless ultra-close. Dust folds into nearest 
 - Zoom: −/+/Fit + Ctrl/⌘+wheel
 - Pan: drag (hand tool)
 - Paste/drop/file equally supported
-- Colors: Auto|1|2|3|4 segmented
+- Colors: Auto|1–8 segmented (API accepts up to 16)
 - Font: Inter
 
 ---
@@ -328,3 +328,87 @@ shelving.
   geometry passes.
 - Legacy `geometry.py` (`--geom`) remains as-is per ADR-14: off by
   default, experimental only.
+
+---
+
+## ADR-22: Background is always kept — paper/fullbleed split removed
+
+**Status:** Accepted  
+**Date:** 2026-07-22
+
+**Context:** The pipeline classified inputs as "paper" (white_fraction ≥
+0.22 → background erased to white) or "fullbleed". On sample_10 (green/gold
+label) the border-median background was the dark-green brand plate itself;
+paper mode erased 97.4% of it (52% of the image), and JPEG edge-mix colors
+on the gold/green boundary then survived as MAJOR ink clusters, producing
+an olive fringe. Root cause: a semantics gap ("background = paper white"
+vs "background = brand field"), not a code bug. Owner does not need
+background removal — deleting a background rectangle in Illustrator is
+trivial, while auto-erasure destroys labels.
+
+**Decision:**
+1. The paper/fullbleed classification and the erase-to-white path are
+   removed (commit `d3be21d`, −45 lines net). Background is ALWAYS kept
+   as a regular bottom palette layer.
+2. `estimate_background()` detection and BG_DIST2 snapping stay — JPEG
+   noise cleanup now snaps to the detected bg color, not to white.
+3. Background occupies a reserved slot OUTSIDE the ink limit:
+   auto = bg + N inks; manual K = bg + K inks.
+4. Follow-up fix (commit `4c58039`): gradient-crush anchor for the
+   low-saturation group is chosen by MASS (dominant cluster), not by
+   darkness — the darkest-anchor heuristic assumed white was always
+   background and turned a 34.6% white panel gray.
+
+**Results:** 11-sample IoU aw 0.9335 → 0.9853; sample_10 0.4989 → 0.97+.
+Bimodal guard no longer fires on any sample but is kept as a safety net.
+Open problem #1 (palette loss on complex labels) closed by this ADR
+together with ADR-23.
+
+**Operational note:** the API runs as `logotrace.service`; after every
+merge to main the service must be restarted (`systemctl restart
+logotrace`) or the web UI serves stale code.
+
+---
+
+## ADR-23: Unified auto palette selection (auto-N)
+
+**Status:** Accepted  
+**Date:** 2026-07-22
+
+**Context:** Auto mode hard-capped the palette at 4 inks; multi-ink
+labels (sample_11 bread label: brown, orange, yellow, bordeaux, white)
+lost colors. A first auto-N attempt (commit `6cc2163`) layered new
+heuristics (hue-only bucketing, add-back cap, GRAY_SAT_MAX 0.14→0.16,
+bounds 1..6) on top of the old 4-color-era code and produced three
+failures: bordeaux merged into orange (hue-only merge ignores lightness),
+sample_10 Chamfer 0.4→3.7px (auto-N=2 forced crush to drop the 34.6%
+white panel), and sample_09's two grays collapsed into one (SAT shift,
+metric improved while visual quality dropped — owner rejected on review).
+
+**Decision** (commit `f5fb537`) — palette selection is ONE coherent
+procedure:
+1. Candidates by mass: clusters ≥ 3% of the dominant cluster.
+2. Merging ONLY by full color distance: weighted HSL with w_L=2, w_S=1,
+   w_H=1, merge threshold 0.18. Never merge by hue alone. Distant-lightness
+   pairs (bordeaux vs orange: 0.332; dark vs light gray) stay separate.
+3. N = number of survivors, bounds 1..8. The add-back heuristic is
+   deleted (it patched the hue-only merging bug).
+4. Gradient crush runs on survivors but may NEVER drop a color whose
+   mass exceeds the candidate threshold — crush merges ramps, it does
+   not enforce N.
+5. GRAY_SAT_MAX = 0.14 (the 0.16 shift is rejected: on sample_09 it
+   merged #5d646e into light gray — metrics up, visual quality down).
+6. Manual K (exact) contract unchanged. UI: Auto|1–8.
+
+**Known trade-offs (accepted by owner):** sample_02 −0.014 IoU aw (one
+extra intermediate green in the palette), sample_04 −0.028 (pink hue
+shift). The 0.18 threshold is a deliberate compromise between
+bordeaux-vs-brown separation and ramp collapse — do not tune it
+casually; any change must re-pass the ADR-23 acceptance set
+(sample_05, 08, 09, 10, 11).
+
+**Lesson recorded:** three times in one day metrics improved while
+visual quality regressed (gray panel, sample_09 grays, pass-3
+smoothing). Pixel metrics are necessary but not sufficient — owner
+visual review is a mandatory part of acceptance for palette and curve
+changes.
