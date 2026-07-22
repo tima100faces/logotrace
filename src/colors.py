@@ -21,7 +21,7 @@ COLORS_MODE_EXACT = "exact"
 COLORS_MODE_AUTO = "auto"
 
 # Gradient collapse: low-saturation chain → one ink; same-hue L-ramp → one anchor
-GRAY_SAT_MAX = 0.14
+GRAY_SAT_MAX = 0.16
 HUE_BUCKET_DEG = 28.0
 
 
@@ -301,6 +301,8 @@ def collapse_gradient_ramps(
 
     chroma_sorted = sorted(chroma, key=_hue_deg)
     buckets: list[list[tuple[int, int, int]]] = []
+    # Narrow hue bucket when many colors survive (preserve distinct warm hues)
+    effective_bucket = max(14.0, HUE_BUCKET_DEG * 4 / max_colors) if max_colors > 4 else HUE_BUCKET_DEG
     for c in chroma_sorted:
         h = _hue_deg(c)
         placed = False
@@ -308,7 +310,7 @@ def collapse_gradient_ramps(
             bh = _hue_deg(bucket[0])
             dh = abs(h - bh)
             dh = min(dh, 360.0 - dh)
-            if dh <= HUE_BUCKET_DEG:
+            if dh <= effective_bucket:
                 bucket.append(c)
                 placed = True
                 break
@@ -344,7 +346,9 @@ def _select_from_pixels(
     """
     Mass-aware palette from ink pixels.
 
-    up_to (auto): wide candidates → gradient crush → ≤ max_colors
+    up_to (auto): wide candidates → gradient crush → ≤ max_colors.
+    When max_colors > 4 (auto-N), skip gradient crush — mass-aware selection
+    already preserves distinct hues.
     exact (manual K): top-K by mass, NO gradient crush — dual gray etc. survive
     """
     clusters = _build_clusters(ink)
@@ -354,9 +358,24 @@ def _select_from_pixels(
     # Build color → count map for mass-weighted gray anchor
     color_counts: dict[tuple[int, int, int], int] = {c.center: c.count for c in clusters}
 
-    wide_n = max(max_colors * 4, max_colors + 2)
+    wide_n = max(max(4, max_colors) * 4, max(4, max_colors) + 2)
     wide = _mass_aware_select(clusters, wide_n, colors_mode=COLORS_MODE_UP_TO)
-    collapsed = collapse_gradient_ramps(wide, max_colors=max_colors, counts=color_counts)
+    collapsed = collapse_gradient_ramps(wide, max_colors=min(4, max_colors), counts=color_counts)
+
+    # Add-back: when auto-N > number crushed AND the palette is chromatically
+    # diverse (≥ 40° hue spread), recover mass clusters lost by hue bucketing.
+    # Cap at +2 colors. Simple/single-hue logos stay clean.
+    if max_colors > len(collapsed) and colors_mode == COLORS_MODE_UP_TO:
+        hues = [_hue_deg(c) for c in wide if _saturation(c) > GRAY_SAT_MAX]
+        hue_spread = max(hues) - min(hues) if len(hues) >= 2 else 0
+        if hue_spread >= 40:
+            add_limit = len(collapsed) + 2
+            mass_colors = _mass_aware_select(clusters, 16, colors_mode=COLORS_MODE_UP_TO)
+            for c in mass_colors:
+                if len(collapsed) >= min(max_colors, add_limit):
+                    break
+                if all(_dist2(c, existing) > MERGE_DIST2 for existing in collapsed):
+                    collapsed.append(c)
     if len(collapsed) > max_colors:
         collapsed = collapsed[:max_colors]
     return collapsed or [(0, 0, 0)]
@@ -435,6 +454,16 @@ def analyze_palette(
             background=bg,
             colors_mode=colors_mode,
         )
+
+    # Auto-N: dynamic palette size from cluster mass distribution
+    # Keep clusters with mass ≥ 3% of dominant cluster. Hard bounds 1..6.
+    if colors_mode == COLORS_MODE_UP_TO:
+        clusters = _build_clusters(ink)
+        sorted_masses = sorted([c.count for c in clusters], reverse=True)
+        top_mass = sorted_masses[0] if sorted_masses else 0
+        threshold = max(top_mass * 0.03, 1)
+        n = sum(1 for m in sorted_masses if m >= threshold)
+        max_colors = max(1, min(n, 6))
 
     colors = _select_from_pixels(ink, max_colors, colors_mode=colors_mode)
 
