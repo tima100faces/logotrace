@@ -10,9 +10,6 @@ from PIL import Image
 # Squared distance thresholds (0-255 RGB space)
 BG_DIST2 = 45**2
 NEAR_WHITE_MIN = 230
-# If fewer than this fraction of pixels are near-white, treat as full-bleed brand art
-# (field color is part of the logo, not disposable paper).
-PAPER_WHITE_FRACTION = 0.22
 MERGE_DIST2 = 35**2
 # Cluster is "major" (peer brand color) if it has at least this fraction of ink pixels.
 MIN_MAJOR_MASS = 0.03
@@ -369,10 +366,8 @@ def _unique_color_count(rgb: np.ndarray) -> int:
 
 @dataclass(frozen=True)
 class PaletteResult:
-    colors: list[tuple[int, int, int]]
-    mode: str  # "paper" | "fullbleed"
+    colors: list[tuple[int, int, int]]  # bg always first entry
     background: tuple[int, int, int]
-    white_fraction: float
     colors_mode: str = COLORS_MODE_UP_TO
 
 
@@ -381,14 +376,14 @@ def analyze_palette(
     max_colors: int,
     colors_mode: str = COLORS_MODE_UP_TO,
 ) -> PaletteResult:
-    """
-    Extract brand colors (up_to or exact N ink colors).
+    """Extract brand colors. Background is always kept as the bottom fill layer.
 
-    paper: lots of near-white → drop paper/bg, keep ink only
-    fullbleed: brand field fills frame → keep field color in palette;
-               only pure near-white becomes print white
+    bg is never erased — it always occupies the first palette slot.
+    max_colors controls the number of INK colors (bg is on top of this limit).
+    auto: bg + up_to max_colors inks. manual K: bg + K inks.
 
-    Mass-aware merge: dust folds into majors; two major peers never merge.
+    Pixels within BG_DIST2 of the detected background snap to the bg color
+    (JPEG noise cleanup). No pixels are ever replaced with white.
     """
     if max_colors < 1:
         raise ValueError("max_colors must be >= 1")
@@ -413,68 +408,65 @@ def analyze_palette(
         & (flat[:, 1] >= NEAR_WHITE_MIN)
         & (flat[:, 2] >= NEAR_WHITE_MIN)
     )
-    white_fraction = float(near_white.mean()) if len(flat) else 0.0
     bg = estimate_background(rgb)
     bg_a = np.array(bg, dtype=np.int32)
     d_bg = np.sum((flat - bg_a) ** 2, axis=1)
 
-    paper_mode = white_fraction >= PAPER_WHITE_FRACTION or _is_near_white(bg)
+    # Ink = everything outside the bg-snapping zone (BG_DIST2).
+    # Pixels within BG_DIST2 of bg will snap to bg in remap_to_palette.
+    ink_mask = d_bg > BG_DIST2
+    ink = flat[ink_mask]
 
-    if paper_mode:
-        ink_mask = (~near_white) & (d_bg > BG_DIST2)
-        ink = flat[ink_mask]
-        mode = "paper"
-        if ink.size == 0:
-            ink = flat[~near_white]
-        colors = _select_from_pixels(ink, max_colors, colors_mode=colors_mode)
-    else:
-        ink = flat[~near_white] if near_white.any() else flat
-        mode = "fullbleed"
-        colors = _select_from_pixels(ink, max_colors, colors_mode=colors_mode)
-        # ensure border/field color is present if distinct major
-        if not any(_dist2(bg, c) <= MERGE_DIST2 for c in colors) and not _is_near_white(bg):
-            colors = [bg] + [c for c in colors if _dist2(c, bg) > MERGE_DIST2]
-            if colors_mode == COLORS_MODE_EXACT:
-                colors = colors[:max_colors]
-            else:
-                colors = colors[:max_colors]
+    if ink.size == 0:
+        # All pixels are bg — return just bg
+        return PaletteResult(
+            colors=[bg],
+            background=bg,
+            colors_mode=colors_mode,
+        )
 
-    # Guard: crush 1-fill on bimodal image → self-correct
+    colors = _select_from_pixels(ink, max_colors, colors_mode=colors_mode)
+
+    # Bimodal guard: if gradient crush collapsed a multi-color image to
+    # a single fill, recover mass-aware colors from all non-near-white ink.
     if (
         colors_mode == COLORS_MODE_UP_TO
         and len(colors) == 1
         and max_colors > 1
     ):
-        ink2 = flat[~near_white] if (paper_mode and ink.size > 0) else (ink if ink.size > 0 else flat)
-        if len(ink2) > 0:
-            total = len(ink2)
-            # Bucket non-white pixels by lightness (0-255 into 13 buckets of ~20)
-            buckets: dict[int, int] = {}
-            hist_min = int(ink2.min())
-            hist_max = int(ink2.max())
-            # Only bimodal if span is wide enough to matter
-            if hist_max - hist_min > 60:
-                for px in ink2:
-                    k = int((int(px[0]) + int(px[1]) + int(px[2])) / 3.0 / 20.0)
-                    buckets[k] = buckets.get(k, 0) + 1
-                peaks = sorted(
-                    [(k, v / total) for k, v in buckets.items() if v / total > 0.10],
-                    key=lambda kv: kv[0]
-                )
-                if len(peaks) >= 2 and peaks[-1][0] - peaks[0][0] >= 3:
-                    # Bimodal — two mass peaks far apart. Crush was wrong.
-                    mass_clusters = _build_clusters(ink2)
-                    mass_colors = _mass_aware_select(mass_clusters, max_colors, colors_mode=COLORS_MODE_UP_TO)
-                    colors = mass_colors
+        # Use ink directly (already excludes bg-snapped pixels)
+        total = len(ink)
+        buckets: dict[int, int] = {}
+        hist_min = int(ink.min())
+        hist_max = int(ink.max())
+        if hist_max - hist_min > 60:
+            for px in ink:
+                k = int((int(px[0]) + int(px[1]) + int(px[2])) / 3.0 / 20.0)
+                buckets[k] = buckets.get(k, 0) + 1
+            peaks = sorted(
+                [(k, v / total) for k, v in buckets.items() if v / total > 0.10],
+                key=lambda kv: kv[0],
+            )
+            if len(peaks) >= 2 and peaks[-1][0] - peaks[0][0] >= 3:
+                # Bimodal — two mass peaks far apart. Crush was wrong.
+                mass_clusters = _build_clusters(ink)
+                mass_colors = _mass_aware_select(mass_clusters, max_colors, colors_mode=COLORS_MODE_UP_TO)
+                colors = mass_colors
 
     if not colors:
         colors = [(0, 0, 0)]
 
+    # bg is always first; deduplicate against it
+    palette = [bg]
+    for c in colors:
+        if _dist2(c, bg) > MERGE_DIST2:
+            palette.append(c)
+    # Trim to bg + max_colors
+    palette = palette[:max_colors + 1]
+
     return PaletteResult(
-        colors=colors,
-        mode=mode,
+        colors=palette,
         background=bg,
-        white_fraction=white_fraction,
         colors_mode=colors_mode,
     )
 
@@ -482,14 +474,9 @@ def analyze_palette(
 def extract_logo_colors(
     img: Image.Image,
     max_colors: int,
-    *,
-    ignore_background: bool = True,
 ) -> list[tuple[int, int, int]]:
-    """Backward-compatible helper → list of RGB tuples."""
+    """Extract palette: bg + up_to max_colors inks."""
     res = analyze_palette(img, max_colors)
-    if not ignore_background and res.mode == "paper":
-        # force include all major colors
-        return analyze_palette(img, max_colors).colors
     return res.colors
 
 
@@ -498,14 +485,13 @@ def remap_to_palette(
     palette: list[tuple[int, int, int]],
     *,
     background: tuple[int, int, int] | None = None,
-    mode: str = "paper",
     keep_alpha: bool = False,
 ) -> Image.Image:
-    """
-    Snap every pixel to nearest palette color (numpy).
+    """Snap every pixel to nearest palette color.
 
-    paper: near-white OR border-bg → pure white
-    fullbleed: only near-white → pure white (brand field stays)
+    Pixels within BG_DIST2 of the detected background snap to bg
+    (JPEG noise cleanup). All other pixels get nearest-palette remap.
+    No pixels are ever replaced with white.
     """
     if not palette:
         raise ValueError("palette must not be empty")
@@ -532,19 +518,10 @@ def remap_to_palette(
     nearest_idx = np.argmin(d2, axis=1)
     mapped = pal[nearest_idx].copy()
 
-    near_white = (
-        (flat[:, 0] >= NEAR_WHITE_MIN)
-        & (flat[:, 1] >= NEAR_WHITE_MIN)
-        & (flat[:, 2] >= NEAR_WHITE_MIN)
-    )
+    # Snap pixels within BG_DIST2 to the detected background color
     d_bg = np.sum((flat.astype(np.int32) - bg_a) ** 2, axis=1)
-
-    if mode == "fullbleed":
-        is_bg = near_white
-    else:
-        is_bg = near_white | (d_bg <= BG_DIST2)
-
-    mapped[is_bg] = np.array([255, 255, 255], dtype=np.int32)
+    is_bg = d_bg <= BG_DIST2
+    mapped[is_bg] = bg_a
 
     if keep_alpha and alpha is not None:
         out_rgb = mapped.reshape(h, w, 3).astype(np.uint8)

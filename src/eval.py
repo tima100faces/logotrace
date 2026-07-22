@@ -23,7 +23,6 @@ from scipy.ndimage import distance_transform_edt
 from src.colors import (
     COLORS_MODE_UP_TO,
     BG_DIST2,
-    PAPER_WHITE_FRACTION,
     NEAR_WHITE_MIN,
     estimate_background,
 )
@@ -144,31 +143,14 @@ def _count_svg_nodes(svg_text: str) -> int:
 # Background detection
 # ---------------------------------------------------------------------------
 
-def _dist2_rgb(a: tuple[int, int, int], b: tuple[int, int, int]) -> int:
-    return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
 
-
-def _compute_near_white_fraction(rgb_arr: np.ndarray) -> float:
-    flat = rgb_arr.reshape(-1, 3)
-    nw = (
-        (flat[:, 0] >= NEAR_WHITE_MIN)
-        & (flat[:, 1] >= NEAR_WHITE_MIN)
-        & (flat[:, 2] >= NEAR_WHITE_MIN)
-    )
-    return float(nw.mean()) if len(flat) else 0.0
-
-
-def _eval_palette_and_mode(
+def _eval_palette(
     inks: list[tuple[int, int, int]],
-    src_rgb: np.ndarray,
-) -> tuple[list[tuple[int, int, int]], str]:
-    bg = estimate_background(Image.fromarray(src_rgb))
-    nw_frac = _compute_near_white_fraction(src_rgb)
-    bg_is_ink = any(_dist2_rgb(bg, ink) <= BG_DIST2 for ink in inks)
-    is_fullbleed = bg_is_ink or nw_frac < PAPER_WHITE_FRACTION
-    if is_fullbleed:
-        return list(inks), "fullbleed"
-    return list(inks) + [bg], "paper"
+) -> list[tuple[int, int, int]]:
+    """Evaluation palette: pipeline output is already [bg, ink1, ink2, ...].
+    bg is always the first entry and always a mask class.
+    """
+    return list(inks)
 
 
 def _masks_identical(a: np.ndarray, b: np.ndarray) -> bool:
@@ -317,7 +299,7 @@ def evaluate_sample(
             return {
                 "sample": input_path.stem, "file": input_path.name,
                 "w": w, "h": h, "colors_requested": colors,
-                "palette": [], "bg_color": None, "mode": "paper",
+                "palette": [], "bg_color": None,
                 "iou_mean": None, "iou_worst": None, "iou_bg": None,
                 "iou_aw": None,
                 "iou_unmatched": 0, "chamfer": None,
@@ -337,9 +319,9 @@ def evaluate_sample(
         svg_bytes = len(svg_text.encode("utf-8"))
 
         # 4 ─ Build evaluation palette (on ORIGINAL image, not upscaled)
-        eval_palette, mode = _eval_palette_and_mode(inks, src_rgb)
-        bg_color = eval_palette[-1] if mode == "paper" else None
-        has_bg = mode == "paper"
+        eval_palette = _eval_palette(inks)
+        bg_color = eval_palette[0] if eval_palette else None
+        has_bg = True
 
         # 5 ─ Build reference: binarize original to eval palette
         ref_arr = _binarize(src_rgb, eval_palette)
@@ -469,7 +451,6 @@ def evaluate_sample(
             "colors_requested": colors,
             "palette": inks,
             "bg_color": bg_color,
-            "mode": mode,
             "iou_mean": iou_mean,
             "iou_worst": iou_worst,
             "iou_bg": iou_bg,
@@ -508,7 +489,7 @@ def self_test_sample(
         colors_mode=colors_mode, geom=geom,
     )
 
-    eval_palette, mode = _eval_palette_and_mode(inks, src_rgb)
+    eval_palette = _eval_palette(inks)
     ref_arr = _binarize(src_rgb, eval_palette)
 
     ious = []
@@ -534,7 +515,7 @@ def self_test_sample(
     return {
         "sample": input_path.stem, "file": input_path.name,
         "iou_mean": iou_mean, "chamfer": chamfer,
-        "mode": mode, "render_ok": True,
+        "render_ok": True,
     }
 
 
@@ -572,18 +553,17 @@ def generate_report(results: list[dict], output_path: Path | str, version: str =
     lines += [
         "## Per-Sample Metrics",
         "",
-        "| # | Sample | Size | Mode | Inks | IoU mean | IoU aw | IoU worst | IoU bg | Chamfer | Nodes | SVG KB | Time |",
-        "|---|--------|------|------|------|----------|--------|-----------|--------|---------|-------|--------|------|",
+        "| # | Sample | Size | Inks | IoU mean | IoU aw | IoU worst | IoU bg | Chamfer | Nodes | SVG KB | Time |",
+        "|---|--------|------|------|----------|--------|-----------|--------|---------|-------|--------|------|",
     ]
 
     for i, r in enumerate(results, 1):
-        mode_str = r.get("mode", "paper")
         bg_str = _val(r.get("iou_bg")) if r.get("iou_bg") is not None else "—"
         aw_str = _val(r.get("iou_aw")) if r.get("iou_aw") is not None else "—"
         t_str = f"{r.get('elapsed', 0)}s" if r.get("elapsed") else "—"
         degenerate = " ⚠" if r.get("degenerate") else ""
         lines.append(
-            f"| {i} | `{r['file']}` | {r['w']}×{r['h']} | {mode_str} "
+            f"| {i} | `{r['file']}` | {r['w']}×{r['h']} "
             f"| {_format_palette(r['palette'])} "
             f"| {_val(r['iou_mean'])}{degenerate} | {aw_str} | {_val(r['iou_worst'])} "
             f"| {bg_str} "
@@ -639,10 +619,6 @@ def generate_report(results: list[dict], output_path: Path | str, version: str =
         lines.append(f"- **SVG size mean:** {np.mean(size_vals) / 1024:.1f} KB")
     if elapsed_vals:
         lines.append(f"- **Time mean:** {np.mean(elapsed_vals):.1f}s  (total: {np.sum(elapsed_vals):.0f}s)")
-
-    fb = [r for r in results if r.get("mode") == "fullbleed"]
-    if fb:
-        lines.append(f"- **Fullbleed samples:** {len(fb)}")
 
     if degs:
         lines.append(f"- **Degenerate samples:** {len(degs)}")

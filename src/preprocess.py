@@ -63,11 +63,11 @@ def prepare_for_trace(
     dest_path: Path,
     *,
     colors_mode: str = COLORS_MODE_UP_TO,
-) -> tuple[Path, list[tuple[int, int, int]], str]:
-    """
-    Brand palette (mass-aware + gradient crush) → hard remap → PNG for VTracer.
+) -> tuple[Path, list[tuple[int, int, int]]]:
+    """Brand palette (mass-aware + gradient crush) → hard remap → PNG for VTracer.
 
-    No pixel upscale / morph / disk-snap here — those created staircase curves.
+    Background is always detected and kept as the first palette entry.
+    No pixel upscale / morph / disk-snap here.
     """
     max_colors = _validate_colors(max_colors)
     img = load_image(source)
@@ -78,11 +78,10 @@ def prepare_for_trace(
         img,
         analysis.colors,
         background=analysis.background,
-        mode=analysis.mode,
         keep_alpha=keep_alpha,
     )
 
     dest_path = Path(dest_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     prepared.save(dest_path, format="PNG")
-    return dest_path, analysis.colors, analysis.mode
+    return dest_path, analysis.colors

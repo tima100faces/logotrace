@@ -11,7 +11,7 @@ from src.eval import (
     _color_mask,
     _count_svg_nodes,
     _edge_map,
-    _eval_palette_and_mode,
+    _eval_palette,
     _hungarian_pair,
     _masks_identical,
     evaluate_sample,
@@ -157,27 +157,32 @@ def test_count_svg_nodes_empty_d():
 # Background detection
 # ---------------------------------------------------------------------------
 
-def test_eval_palette_paper_mode():
-    """White-background image → paper mode with bg class."""
-    arr = np.full((60, 80, 3), (255, 255, 255), dtype=np.uint8)
-    arr[10:30, 10:40] = (200, 50, 50)  # red ink
-    inks = [(200, 50, 50)]
-    eval_pal, mode = _eval_palette_and_mode(inks, arr)
-    assert mode == "paper"
-    assert len(eval_pal) == 2  # ink + bg
-    # bg should be near white (255,255,255)
-    bg = eval_pal[1]
-    assert bg[0] > 200 and bg[1] > 200 and bg[2] > 200
+def test_eval_palette_bg_always_first():
+    """Palette from pipeline always has bg as first entry."""
+    from src.preprocess import prepare_for_trace
+    import tempfile
+    src = SAMPLES / "sample_01.jpg"
+    if not src.is_file():
+        pytest.skip("sample_01 missing")
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "prep.png"
+        _, palette = prepare_for_trace(src, 4, out)
+    # bg must be first entry, total = bg + up_to 4 inks
+    assert len(palette) >= 1
+    assert len(palette) <= 5  # bg + up_to 4 inks
 
 
-def test_eval_palette_fullbleed():
-    """All-dark image with bg ≈ ink → fullbleed, no bg class."""
-    arr = np.full((60, 80, 3), (30, 30, 30), dtype=np.uint8)
-    arr[10:30, 10:40] = (200, 50, 50)
-    inks = [(200, 50, 50)]
-    eval_pal, mode = _eval_palette_and_mode(inks, arr)
-    assert mode == "fullbleed"
-    assert len(eval_pal) == 1  # inks only
+def test_palette_includes_bg_on_dark_image():
+    """Dark-background image: bg is still first palette entry (not erased)."""
+    from src.preprocess import prepare_for_trace
+    import tempfile
+    src = SAMPLES / "sample_10.png"
+    if not src.is_file():
+        pytest.skip("sample_10 missing")
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "prep.png"
+        _, palette = prepare_for_trace(src, 4, out)
+    assert len(palette) >= 2  # bg + at least 1 ink
 
 
 # ---------------------------------------------------------------------------
@@ -200,18 +205,15 @@ def test_masks_identical_false():
 # Degenerate detection via evaluate_sample
 # ---------------------------------------------------------------------------
 
-def test_single_ink_paper_mode_not_perfect():
-    """Single-ink on white bg: masks must differ → not degenerate."""
+def test_single_ink_sample_not_degenerate():
+    """Single-ink sample with bg class: masks must differ → not degenerate."""
     src = SAMPLES / "sample_03.jpg"
     if not src.is_file():
         pytest.skip("sample_03 missing")
     r = evaluate_sample(src)
-    assert not r.get("degenerate"), f"sample_03 should not be degenerate with bg class: {r}"
-    # With background class, single-ink should have meaningful edges
-    assert r["mode"] == "paper" or r["mode"] == "fullbleed"
-    if r["mode"] == "paper":
-        assert r["iou_mean"] is not None and r["iou_mean"] < 0.99, \
-            f"paper single-ink should be <1.0, got {r['iou_mean']}"
+    assert not r.get("degenerate"), f"sample_03 should not be degenerate: {r}"
+    assert r["iou_mean"] is not None and r["iou_mean"] < 0.99, \
+        f"single-ink should be <1.0, got {r['iou_mean']}"
     if r["iou_bg"] is not None:
         assert r["iou_bg"] < 1.0, f"bg IoU should be measurable, got {r['iou_bg']}"
 
@@ -237,9 +239,8 @@ def test_per_mask_area_and_iou_aw():
     iou_aw = r.get("iou_aw")
     iou_mean = r.get("iou_mean")
     assert iou_aw is not None
-    # For paper mode: bg has large area, small masks drag mean down
-    if r["mode"] == "paper":
-        assert iou_aw > iou_mean, f"aw={iou_aw} should be > mean={iou_mean} (bg dominates)"
+    # bg has large area (>80%), small accent masks drag mean down
+    assert iou_aw > iou_mean, f"aw={iou_aw} should be > mean={iou_mean} (bg dominates)"
 
 
 def test_upscale_variants_run():

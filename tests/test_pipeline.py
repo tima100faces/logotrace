@@ -78,7 +78,9 @@ def test_exact_mode_collapses_to_n():
     up = analyze_palette(img, 4, colors_mode=COLORS_MODE_UP_TO)
     ex = analyze_palette(img, 2, colors_mode=COLORS_MODE_EXACT)
     assert len(up.colors) >= 2
-    assert len(ex.colors) == 2
+    # exact, max_colors=2 → bg + 2 inks = 3 total
+    assert len(ex.colors) == 3
+    assert ex.colors[0] == (255, 255, 255)  # bg is always first
 
 
 def test_mass_aware_keeps_two_close_majors():

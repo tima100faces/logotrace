@@ -138,7 +138,7 @@ def vectorize_to_svg(
             # 1 ─ Palette + remap
             prepared = tmpdir / "prepared.png"
             svg_tmp = tmpdir / "out.svg"
-            _path, palette, _mode = prepare_for_trace(
+            _path, palette = prepare_for_trace(
                 source, colors, prepared, colors_mode=colors_mode
             )
 
