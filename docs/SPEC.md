@@ -35,12 +35,30 @@ Not a Vectorizer.AI clone. Strength = brand-color fidelity + clean enough geomet
 
 - **Open problem #1 (top priority): palette loss on complex inputs** —
   sample_10 (green/gold label): large dark-green plate dropped, gold → olive.
-  IoU aw 0.4989. Needs step-by-step pipeline tracing.
+  IoU aw 0.4989. **Diagnosed 2026-07-22** (`scripts/diag_sample_10.py`,
+  `output/diag_sample_10/`): (a) border-median background = the dark-green
+  plate itself (#002507); white_fraction 0.37 ≥ 0.22 → paper mode → 97.4%
+  of the plate is replaced with white. Not a code bug — a semantics gap:
+  "background = paper white" vs "background = brand field".
+  (b) Olive cast = JPEG edge-mix colors (#cad4cc, #7bab84) on the
+  gold/green boundary surviving as MAJOR ink clusters → green fringe
+  around gold. Gradient crush is NOT at fault (gold anchor #f3e675 kept).
+  Fix direction pending product decision (paper/fullbleed rules).
 - **Open problem #2: thin-stroke wobble** (sample_05 line art, 2–4 px strokes) —
   both stroke edges traced independently → lumpy varying-width lines.
   First cheap lever: stronger upscale for thin-stroke inputs. Centerline
   tracing = separate large project, not approved.
-- Per-color binary trace (potrace) — only per ADR-17 benchmark rule
+- **Candidate experiment: per-color binary trace** — palette → one binary
+  mask per ink → trace each mask separately (VTracer binary or potrace)
+  → stack layers. Rationale: binary masks are memory-cheap, allowing 4x+
+  upscale beyond the color pipeline's 2x/9.5M px cap — targets open
+  problem #2; edge-mix colors cannot enter the trace (pixels are assigned
+  to inks before tracing). Known risks: seams between independently traced
+  masks (hairline gaps/overlaps — stacked VTracer avoids this by
+  construction; would need trapping logic), and it does not fix palette
+  selection itself (garbage palette in → perfectly traced garbage out).
+  Sequencing: after open problem #1. Acceptance per ADR-17 rule:
+  benchmark vs v4 on the canonical set — wins or it's gone.
 - Optional CMYK (Illustrator downstream)
 - Auto-N palette size
 
