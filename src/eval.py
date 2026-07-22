@@ -258,7 +258,6 @@ def evaluate_sample(
     upscale: str = "auto",
     vtracer_threshold_scale: float = 1.0,
     engine: str = "vtracer",
-    geometry_fit: bool = False,
     dump_diffs_dir: Path | str | None = None,
 ) -> dict:
     """Run pipeline on a sample and return a dict of metrics.
@@ -307,7 +306,6 @@ def evaluate_sample(
                 colors_mode=colors_mode, geom=geom,
                 upscale=pipe_upscale,
                 engine=engine,
-                geometry_fit=geometry_fit,
             )
             # If pipeline handled upscale, use its effective_scale
             if pipe_upscale:
@@ -694,13 +692,12 @@ def run_matrix(
         return 1
 
     # Variants: add new rows here as needed
-    variants_config: list[tuple[str, str, float, str, bool]] = [
-        ("vtracer+upscale", "auto", 1.0, "vtracer", False),
-        ("vtracer+upscale+fit", "auto", 1.0, "vtracer", True),
+    variants_config: list[tuple[str, str, float, str]] = [
+        ("vtracer+upscale", "auto", 1.0, "vtracer"),
     ]
     all_results: dict[str, list[dict]] = {}
 
-    for var_name, upscale_val, thresh_override, eng_val, fit_val in variants_config:
+    for var_name, upscale_val, thresh_override, eng_val in variants_config:
         print(f"\n{'='*60}")
         print(f"VARIANT: {var_name}")
         print(f"{'='*60}")
@@ -716,17 +713,17 @@ def run_matrix(
             r = evaluate_sample(
                 sp, colors=colors, colors_mode=colors_mode, geom=geom,
                 upscale=upscale_val, vtracer_threshold_scale=thresh,
-                engine=eng_val, geometry_fit=fit_val,
+                engine=eng_val,
             )
             results.append(r)
             eff_str = f" eff={r.get('effective_scale',1.0):.1f}x" if r.get('effective_scale',1.0) > 1.0 else ""
-            print(f"IoU={_val(r['iou_mean'])} Ch={_val(r['chamfer'],'.1f')}px {r.get('elapsed','?')}s{eff_str}")
+            print(f"IoU={_val(r['iou_mean'])} aw={_val(r['iou_aw'])} Ch={_val(r['chamfer'],'.1f')}px {r.get('elapsed','?')}s{eff_str}")
         all_results[var_name] = results
         out_path = Path(output_dir) / f"eval_{var_name.replace('-', '_')}.md"
         generate_report(results, out_path, version=f"v4-{var_name}")
 
     # Build comparison matrix
-    vnames = [vn for vn, _, _, _, _ in variants_config]
+    vnames = [vn for vn, _, _, _ in variants_config]
 
     def _vr(var: str, si: int, key: str, fmt_str: str = ".4f") -> str:
         v = all_results[var][si].get(key)
@@ -827,9 +824,10 @@ def run_eval(
         )
         results.append(r)
         iou_str = f"IoU={_val(r['iou_mean'])}" if r["iou_mean"] is not None else "IoU=—"
+        aw_str = f"aw={_val(r['iou_aw'])}" if r.get("iou_aw") is not None else ""
         ch_str = f"Ch={_val(r['chamfer'],'.1f')}px" if r["chamfer"] is not None else "Ch=—"
         t_str = f"{r.get('elapsed','?')}s"
-        print(f"✓ {iou_str} {ch_str} nodes={r['nodes']} {t_str}")
+        print(f"✓ {iou_str} {aw_str} {ch_str} nodes={r['nodes']} {t_str}")
 
     print(f"\nWriting report → {output_report}")
     ver = f"v3-{upscale}" if upscale != "off" else "v3"

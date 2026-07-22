@@ -46,18 +46,14 @@ def maybe_svgo(svg_text: str) -> str:
         return svg_text
 
 
-def finalize_svg(svg_path: Path | str, *, geom: str = "off", geometry_fit: bool = False) -> str:
+def finalize_svg(svg_path: Path | str, *, geom: str = "off") -> str:
     """
     Default geom=off: raw VTracer splines (production quality).
     basic/strict: experimental only — can facet curves.
-    geometry_fit: primitive fitting (line detection, axis snap, G1 smoothing).
     """
     text = read_svg(svg_path)
     text = maybe_svgo(text)
     level = (geom or GEOM_OFF).lower().strip()
     if level != GEOM_OFF:
         text = normalize_svg_geometry(text, level=level)
-    if geometry_fit:
-        from src.geometry_fit import geometry_fit as apply_fit
-        text, _ = apply_fit(text)
     return text

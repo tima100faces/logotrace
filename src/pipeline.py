@@ -90,7 +90,6 @@ def vectorize_to_svg(
     geom: str = "off",
     upscale: bool = True,
     engine: str = "vtracer",
-    geometry_fit: bool = False,
 ) -> tuple[str, list[tuple[int, int, int]], float]:
     """Core: raster → SVG string + extracted palette + effective upscale factor.
 
@@ -161,7 +160,7 @@ def vectorize_to_svg(
             )
 
             # 3 ─ Postprocess + scale back viewport
-            svg_text = finalize_svg(svg_tmp, geom=geom, geometry_fit=geometry_fit)
+            svg_text = finalize_svg(svg_tmp, geom=geom)
             if eff > 1.0:
                 svg_text = _wrap_svg_scaled(svg_text, eff, orig_w, orig_h)
 
