@@ -34,8 +34,9 @@ curl -s -F file=@logo.jpg -F palette=auto http://127.0.0.1:8095/vectorize -o out
 ```
 Raster (JPEG/PNG)
   │
-  ├─ [src/eval.py]         upscale preprocess (default: auto toward 3072px cap)
-  │   └─ Lanczos resize, effective factor ≤ 2x, skip if < 1.05x
+  ├─ [src/pipeline.py]     upscale preprocess (default: auto toward 3072px cap)
+  │   └─ Lanczos resize, effective factor ≤ 2x, skip if < 1.05x,
+  │      pixel-unit VTracer thresholds scaled by effective factor
   │
   ├─ [src/colors.py]      palette analysis
   │   ├─ estimate_background()       paper vs fullbleed
@@ -51,7 +52,7 @@ Raster (JPEG/PNG)
   │
   ├─ [src/postprocess.py]  svgo optimize
   │
-  ├─ [src/geometry.py]     path simplify (off by default)
+  ├─ [src/geometry.py]     path simplify (off by default, experimental — ADR-14)
   │
   ├─ [src/pdf_export.py]   SVG → PDF (rsvg-convert / cairosvg)
   │
@@ -84,6 +85,20 @@ Gray/same-hue lightness ramps collapse to one solid ink (sample_08 banding → s
 ### Geometry post-pass
 
 `--geom off` (default) keeps raw VTracer splines. `basic`/`strict` are experimental and may facet curves — use only for testing.
+A separate geometry_fit refinement pass was built, benchmarked and **removed** (no visible benefit — see ADR-21).
+
+---
+
+## Evaluation
+
+```bash
+python -m src.eval input/ --colors 4
+```
+
+Canonical sample set: `input/sample_01..sample_10`. Metrics: area-weighted IoU
+(background is a first-class mask class), Chamfer on color-transition edges,
+nodes, SVG size. The log prints both `iou_mean` and `iou_aw`; **`iou_aw` is
+the quality aggregate** — see [`docs/EVAL-BASELINE.md`](docs/EVAL-BASELINE.md).
 
 ---
 
@@ -98,11 +113,12 @@ logotrace/
     preprocess.py, tracer_vtracer.py, pipeline.py
     pdf_export.py, postprocess.py, geometry.py
     verify.py, debug_save.py, disks.py
+    eval.py                    # benchmark harness
   static/                      # Web UI (html/css/js + pdf.js)
-  tests/                       # pytest (20 passed)
-  docs/                        # SPEC, DECISIONS, QA-NOTES, ai-preflight-vision-qa
+  tests/                       # pytest
+  docs/                        # SPEC, DECISIONS, EVAL-BASELINE, QA-NOTES
   deploy/                      # nginx snippet for idealabs.co/trace
-  input/                       # sample_*.jpg + ui_* debug dumps
+  input/                       # sample_01..sample_10 + ui_* debug dumps
   output/                      # gitignored PDFs/SVGs
 ```
 
@@ -140,7 +156,8 @@ GET  /              (Web UI)
 ## Documentation
 
 - [`docs/SPEC.md`](docs/SPEC.md) — product spec, user stories, success criteria
-- [`docs/DECISIONS.md`](docs/DECISIONS.md) — architecture decision records (ADR-1…16)
+- [`docs/DECISIONS.md`](docs/DECISIONS.md) — architecture decision records (ADR-1…21)
+- [`docs/EVAL-BASELINE.md`](docs/EVAL-BASELINE.md) — benchmark baselines and metric history
 - [`docs/QA-NOTES.md`](docs/QA-NOTES.md) — manual QA rounds, sample results
 - [`docs/RESEARCH.md`](docs/RESEARCH.md) — tracer selection research
 - [`docs/ai-preflight-vision-qa.md`](docs/ai-preflight-vision-qa.md) — AI vision QA proposal

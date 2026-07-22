@@ -290,8 +290,41 @@ only if chord length ≥ 5 source-px AND max deviation < 0.35 px.
 Single cubics are never converted.
 
 **Consequences:**
-- Chain-based rule implemented in commit `ba5af9b`; result: 0 false
-  merges across the sample set (vs 2168 conversions with the per-cubic
-  approach).
+- Chain-based rule implemented in commit `ba5af9b` (rebased as `f775180`);
+  result: 0 false merges across the sample set (vs 2168 conversions with
+  the per-cubic approach).
 - Any future geometry transform must include per-shape safety guards
   with revert logging.
+
+---
+
+## ADR-21: geometry_fit post-pass — removed (no visible benefit)
+
+**Status:** Accepted  
+**Date:** 2026-07-22
+
+**Context:** geometry_fit was a three-pass post-VTracer geometry cleanup:
+pass 1 — chain-based line detection (per ADR-20), pass 2 — line snapping,
+pass 3 — G1 smoothing at cubic joints. Findings on the canonical sample set:
+
+- **Pass 1: 0 merges.** VTracer chains never satisfied the chord/deviation
+  rule — nothing to convert.
+- **Pass 2: dead by construction.** VTracer emits cubic Béziers only;
+  there are no line segments to snap.
+- **Pass 3: no visible benefit.** Thousands of joints smoothed per sample,
+  0 safety-guard reverts — but owner review of 400% before/after crops
+  found the visual difference negligible, while metrics were slightly
+  worse: Chamfer +0.02 px, SVG size +34%, runtime +50%.
+
+**Decision:** Removed entirely (commit `ed60ddc`, −809 lines: module,
+tests, visual-crop script, pipeline/eval wiring). The tile-based
+`_binarize` fix in `src/eval.py` is retained (independent, prevents OOM
+on high-node samples). Per the no-dormant-code rule: no off-by-default
+shelving.
+
+**Consequences:**
+- Curve refinement beyond VTracer + upscale requires a true
+  differentiable rasterizer (see ADR-18); no further heuristic
+  geometry passes.
+- Legacy `geometry.py` (`--geom`) remains as-is per ADR-14: off by
+  default, experimental only.

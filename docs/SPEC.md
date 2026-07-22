@@ -33,7 +33,14 @@ Not a Vectorizer.AI clone. Strength = brand-color fidelity + clean enough geomet
 
 ### Post-MVP
 
-- Per-color binary trace (potrace) for organic/08-class inputs
+- **Open problem #1 (top priority): palette loss on complex inputs** —
+  sample_10 (green/gold label): large dark-green plate dropped, gold → olive.
+  IoU aw 0.4989. Needs step-by-step pipeline tracing.
+- **Open problem #2: thin-stroke wobble** (sample_05 line art, 2–4 px strokes) —
+  both stroke edges traced independently → lumpy varying-width lines.
+  First cheap lever: stronger upscale for thin-stroke inputs. Centerline
+  tracing = separate large project, not approved.
+- Per-color binary trace (potrace) — only per ADR-17 benchmark rule
 - Optional CMYK (Illustrator downstream)
 - Auto-N palette size
 
@@ -65,6 +72,7 @@ PYTHONPATH=/root/logotrace python -m src.cli input/sample_06.jpg -o output/sampl
 PYTHONPATH=/root/logotrace python -m src.cli input.jpg -o out.svg --format svg   # debug
 PYTHONPATH=/root/logotrace uvicorn src.api:app --host 127.0.0.1 --port 8095
 curl -s -F file=@logo.jpg -F palette=auto -F format=pdf http://127.0.0.1:8095/vectorize -o out.pdf
+python -m src.eval input/ --colors 4   # benchmark vs docs/EVAL-BASELINE.md
 pytest -q
 ```
 
@@ -77,8 +85,8 @@ pytest -q
   README.md
   LICENSE, NOTICE
   bin/vtracer
-  docs/   SPEC, RESEARCH, DECISIONS, QA-NOTES, plans/
-  input/          # sample_*.jpg + ui_* debug dumps
+  docs/   SPEC, RESEARCH, DECISIONS, EVAL-BASELINE, QA-NOTES, plans/
+  input/          # sample_01..sample_10 + ui_* debug dumps
   output/          # gitignored PDFs/SVGs
   deploy/          # nginx snippet
   static/          # index.html, styles.css, app.js
@@ -89,9 +97,10 @@ pytest -q
     config.py
     debug_save.py  # ui_* + last.* dumps
     disks.py       # experimental
+    eval.py        # benchmark harness (IoU aw, Chamfer, tile-based binarize)
     geometry.py    # post-pass geom (off by default)
     pdf_export.py
-    pipeline.py
+    pipeline.py    # orchestrator + v4 upscale policy
     postprocess.py
     preprocess.py
     tracer_vtracer.py
@@ -109,8 +118,11 @@ pytest -q
 4. Output: **PDF only as product deliverable**; SVG debug (API only, no UI button)
 5. PDF color space: **RGB** (Illustrator for further work)
 6. **Web UI:** https://idealabs.co/trace/ — systemd + nginx
+7. Every pipeline change is benchmarked on the full canonical sample set
+   (no exclusions); curve-quality changes additionally require owner visual
+   review — metrics are blind to smoothness.
 
-See `docs/DECISIONS.md` ADR-1…16 and `docs/QA-NOTES.md`.
+See `docs/DECISIONS.md` ADR-1…21 and `docs/QA-NOTES.md`.
 
 ---
 
@@ -118,9 +130,11 @@ See `docs/DECISIONS.md` ADR-1…16 and `docs/QA-NOTES.md`.
 
 | Item | State |
 |------|--------|
-| Repo | `/root/logotrace` local git `main` |
-| Latest commit | `e88ad20` (full-width UI) |
+| Repo | `/root/logotrace` git `main` + github.com/tima100faces/logotrace |
+| Latest commit | `ed60ddc` (geometry_fit removed, 10-sample baseline) |
 | API | `127.0.0.1:8095` (logotrace.service) |
 | Web UI | https://idealabs.co/trace/ |
-| Quality (user) | ~4–4.5/5 |
-| Tests | 20 passed |
+| Quality (user) | ~4–4.5/5 flat logos; complex labels — open problem #1 |
+| Baseline | v4, 10 samples, IoU aw 0.9335 (see EVAL-BASELINE.md) |
+| Tests | pytest green |
+</content>

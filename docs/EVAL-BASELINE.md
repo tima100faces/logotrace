@@ -1,12 +1,60 @@
 # LogoTrace Evaluation Baseline
 
 **Engine:** VTracer (spline, hierarchical=stacked)
-**Samples:** 8
-**Date:** 2026-07-21
+**Canonical sample set:** sample_01..sample_10 (10 files)
+**Date:** 2026-07-22
 
 ---
 
-## v4 (current default — auto upscale + threshold scaling)
+## Reading the metrics: `iou_mean` vs `iou_aw`
+
+The eval log prints both per sample. `iou_mean` is a plain average over all
+color masks — tiny accent masks (< 1% of frame) with low IoU drag it down
+hard (see Step 0 below). `iou_aw` is area-weighted and is **the correct
+aggregate** for quality tracking. Do not compare `iou_mean` from logs
+against `iou_aw` from matrices — they are different metrics by design.
+
+---
+
+## v4 — canonical baseline, 10 samples (2026-07-22)
+
+**Pipeline:** preprocess → auto upscale (≤ 2x, caps: side 3072 / 9.5M px,
+skip < 1.05x, thresholds scaled) → palette quantize (gradient crush +
+bimodal guard) → VTracer spline stacked → svgo → PDF.
+geometry_fit removed (ADR-21). Run: `python -m src.eval input/ --colors 4`.
+
+| # | Sample | IoU mean | IoU aw | Chamfer | Nodes | Time |
+|---|--------|----------|--------|---------|-------|------|
+| 1 | sample_01 | 0.9889 | 0.9889 | 0.11 | 4309 | 3.5s |
+| 2 | sample_02 | 0.7527 | 0.9780 | 0.16 | 3234 | 1.6s |
+| 3 | sample_03 | 0.9313 | 0.9749 | 0.41 | 3286 | 2.2s |
+| 4 | sample_04 | 0.7204 | 0.9666 | 0.15 | 10404 | 2.6s |
+| 5 | sample_05 | 0.5981 | 0.9884 | 0.17 | 1789 | 5.1s |
+| 6 | sample_06 | 0.9810 | 0.9927 | 0.42 | 927 | 4.6s |
+| 7 | sample_07 | 0.7781 | 0.9938 | 0.16 | 1556 | 4.4s |
+| 8 | sample_08 | 0.9722 | 0.9742 | 0.36 | 4763 | 2.0s |
+| 9 | sample_09 | 0.9515 | 0.9787 | 0.24 | 718 | 0.6s |
+| 10 | sample_10 | 0.4965 | 0.4989 | 0.16 | 6531 | 2.0s |
+
+**Aggregate:** IoU mean 0.8171 | **IoU aw 0.9335** | Chamfer 0.23 px |
+Nodes 3752 | SVG 122.1 KB | Time 2.9s
+
+**Notes:**
+- **sample_10 (aw 0.4989) is a known open failure**, not noise: palette
+  loss on a complex green/gold label — a large dark-green plate is dropped
+  (rendered white), gold ornaments shift to olive (edge-mix color promoted
+  into the palette). It stays in the aggregate per the no-exclusions rule.
+  This is the current top-priority problem.
+- sample_11 was removed 2026-07-22: byte-duplicate of sample_05
+  (identical MD5). Earlier "11-sample" aggregates counted sample_05 twice.
+- Aggregates before 2026-07-22 (e.g. "IoU aw 0.982") were computed on the
+  8–9 sample set without sample_10 and are not comparable to this table.
+
+---
+
+# History (superseded)
+
+## v4 (8-sample run, 2026-07-21 — superseded by canonical table above)
 
 **Policy:** `effective = min(2x, 3072/max_side, √(9.5M/total_px))`, skip if < 1.05x.
 **VTracer thresholds:** `filter_speckle` × effective, `segment_length` × effective.
@@ -35,7 +83,7 @@ Angular params (corner, splice) unchanged.
 | Time | 2.0s | 3.4s | +1.7× |
 
 **Verdict:** Chamfer −29% (0.35→0.25 px), IoU +2.7%, at 2.3× nodes. Area-weighted IoU flat (0.981).
-v4 auto upscale is the **new default**. `--upscale off` escape hatch available for debugging.
+v4 auto upscale is the **default**. `--upscale off` escape hatch available for debugging.
 
 ---
 
@@ -75,7 +123,7 @@ Area-weighted IoU is 0.97-0.99 for all samples.
 | sample_07 | #594163 (purple) | 0.2% | 0.134 | tiny accent detail |
 
 **Conclusion:** IoU worst is misleading as a quality signal — it's always a sub-1% mask.
-Area-weighted IoU (0.980) is the correct aggregate. Per-mask area % should be shown
+Area-weighted IoU is the correct aggregate. Per-mask area % should be shown
 alongside IoU in all reports.
 
 XOR diffs for masks with IoU < 0.5 dumped to `output/eval_diffs/`.
