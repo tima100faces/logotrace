@@ -3,14 +3,11 @@
 Flat logo raster → **RGB vector PDF** tracer.  
 Drop a JPEG/PNG, get a clean PDF ready for print and Illustrator.
 
-**Pipeline:** upscale (auto) → brand-color detection → palette remap → VTracer spline → PDF
+**Pipeline:** upscale (auto) → background detection (always kept) → unified auto palette → remap → VTracer spline → PDF
 
 ---
 
 ## Quick start
-
-Deployed on **mainframe**: code `/srv/hermes/projects/logotrace`, live tree `/srv/sites/logotrace`,
-virtualenv inside the live tree (built by `deploy/live-venv.sh`).
 
 ```bash
 cd /srv/hermes/projects/logotrace
@@ -28,11 +25,15 @@ PYTHONPATH=. LOGOTRACE_UPSCALE=off .venv/bin/python -m src.cli input/logo.jpg -o
 curl -s -F file=@input/logo.jpg -F palette=auto http://127.0.0.1:8301/vectorize -o out.pdf
 ```
 
-**Deploy:** `sudo /usr/local/sbin/hermes-site-ctl sync logotrace` — copies the staged tree into the
-live one and restarts the unit. After a fresh `create`, or after a distro upgrade, run
-`bash deploy/live-venv.sh` first.
+**Web UI:** https://trace.idealabs.co/ — paste/drop, Auto|1–8 colors, canvas preview + zoom/pan.
 
-**Web UI:** https://trace.idealabs.co/ — paste/drop, Auto|1–4 colors, canvas preview + zoom/pan.
+**Deploy note:** the service runs on **mainframe** as `site-logotrace` (port 8301); the live tree is
+`/srv/sites/logotrace` and is only ever written by the hosting script:
+
+```bash
+sudo /usr/local/sbin/hermes-site-ctl sync logotrace   # staged tree → live, restarts the unit
+bash deploy/live-venv.sh                              # after a fresh create or a distro upgrade
+```
 
 ---
 
@@ -45,14 +46,16 @@ Raster (JPEG/PNG)
   │   └─ Lanczos resize, effective factor ≤ 2x, skip if < 1.05x,
   │      pixel-unit VTracer thresholds scaled by effective factor
   │
-  ├─ [src/colors.py]      palette analysis
-  │   ├─ estimate_background()       paper vs fullbleed
-  │   ├─ _mass_aware_select()        dust → nearest major
-  │   ├─ collapse_gradient_ramps()   gray ramp → one ink
-  │   └─ bimodal guard               undo crush if two mass peaks
+  ├─ [src/colors.py]      unified auto palette (ADR-22/23)
+  │   ├─ estimate_background()    bg detected, ALWAYS kept as bottom layer
+  │   ├─ mass filter              clusters ≥ 3% of dominant
+  │   ├─ weighted-HSL merge       w_L=2 w_S=1 w_H=1, thr 0.18 — never hue-only
+  │   ├─ N = survivors, 1..8      (auto mode)
+  │   └─ gradient crush           mass anchor; cannot drop mass colors;
+  │                               bimodal guard kept as safety net
   │
   ├─ [src/preprocess.py]   brand-color remap
-  │   └─ remap_to_palette()   snap pixels to measured colors
+  │   └─ remap_to_palette()   snap pixels to measured colors (bg incl.)
   │
   ├─ [src/tracer_vtracer.py]  subprocess → VTracer 0.6.4
   │   └─ spline mode, color, mild speckle
@@ -68,7 +71,6 @@ Raster (JPEG/PNG)
   ├─ [src/pipeline.py]     orchestrator: vectorize_file / vectorize_bytes
   │
   ├─ [src/debug_save.py]   persist input/ui_* + output/ui_* + last.*
-  │                        cap 500 runs, no time purge
   │
   ├─ [src/api.py]          FastAPI: POST /vectorize, GET /health, static UI
   ├─ [src/cli.py]          Typer: --colors, --colors-mode, --geom, --format
@@ -77,22 +79,19 @@ Raster (JPEG/PNG)
 
 ### Palette = Auto / Manual K
 
-| `palette` | Internal mode | Gradient crush |
-|-----------|---------------|----------------|
-| `auto`    | up_to ≤ 4     | yes (bimodal guard overrides) |
-| `1`–`16`  | exact K       | **no** — exact N inks by mass |
+| `palette` | Mode | Behavior |
+|-----------|------|----------|
+| `auto`    | auto-N | bg + N inks, N = mass/HSL survivors, 1..8 (ADR-23) |
+| `1`–`16`  | exact K | bg + exactly K inks by mass, **no crush** |
 
+Background occupies a reserved slot outside the ink limit (ADR-22).
 Response headers: `X-LogoTrace-Colors`, `X-LogoTrace-Colors-Mode`.
-
-### Colors: gradient crush + bimodal guard
-
-Gray/same-hue lightness ramps collapse to one solid ink (sample_08 banding → solid circle).  
-**Bimodal guard:** if crush produces 1 fill but histogram shows two mass peaks >10% separated by ≥60 lightness units → auto-correct to mass-aware palette without crush. Prevents dark-background logos with light text from becoming solid rectangles.
 
 ### Geometry post-pass
 
-`--geom off` (default) keeps raw VTracer splines. `basic`/`strict` are experimental and may facet curves — use only for testing.
-A separate geometry_fit refinement pass was built, benchmarked and **removed** (no visible benefit — see ADR-21).
+`--geom off` (default) keeps raw VTracer splines. `basic`/`strict` are
+experimental and may facet curves. A separate geometry_fit refinement pass
+was built, benchmarked and **removed** (no visible benefit — ADR-21).
 
 ---
 
@@ -102,10 +101,13 @@ A separate geometry_fit refinement pass was built, benchmarked and **removed** (
 python -m src.eval input/ --colors 4
 ```
 
-Canonical sample set: `input/sample_01..sample_10`. Metrics: area-weighted IoU
-(background is a first-class mask class), Chamfer on color-transition edges,
-nodes, SVG size. The log prints both `iou_mean` and `iou_aw`; **`iou_aw` is
-the quality aggregate** — see [`docs/EVAL-BASELINE.md`](docs/EVAL-BASELINE.md).
+Canonical sample set: `input/sample_01..sample_11`. Metrics: area-weighted
+IoU (background is a first-class mask class), Chamfer on color-transition
+edges, nodes, SVG size. The log prints both `iou_mean` and `iou_aw`;
+**`iou_aw` is the quality aggregate** — see
+[`docs/EVAL-BASELINE.md`](docs/EVAL-BASELINE.md). Pixel metrics are blind
+to smoothness and palette semantics — owner visual review is part of
+acceptance for palette/curve changes.
 
 ---
 
@@ -116,7 +118,7 @@ logotrace/
   bin/vtracer                  # bundled 0.6.4 Linux x86_64
   src/
     api.py, cli.py, config.py
-    colors.py                  # palette, crush, bimodal guard
+    colors.py                  # unified auto palette (ADR-22/23)
     preprocess.py, tracer_vtracer.py, pipeline.py
     pdf_export.py, postprocess.py, geometry.py
     verify.py, debug_save.py, disks.py
@@ -124,21 +126,22 @@ logotrace/
   static/                      # Web UI (html/css/js + pdf.js)
   tests/                       # pytest
   docs/                        # STATUS, PRODUCT, PLAN, DECISIONS, PITFALLS + SPEC, EVAL-BASELINE, QA-NOTES
-  deploy/                      # live-venv.sh (builds the service venv in the live tree)
+  deploy/                      # live-venv.sh (builds the service venv in the live tree) + nginx snippet
   input/                       # sample_01..sample_11 + ui_* debug dumps
   output/                      # gitignored PDFs/SVGs
 ```
 
-The live copy lives at `/srv/sites/logotrace` and is owned by `site-logotrace`; it is only ever
-written by `hermes-site-ctl sync`. The service virtualenv is built there by `deploy/live-venv.sh`,
-because the service account cannot read `/srv/hermes` — see `docs/PITFALLS.md`.
+The live copy lives at `/srv/sites/logotrace` and belongs to `site-logotrace`; only
+`hermes-site-ctl sync` writes there. The service virtualenv is built inside it by
+`deploy/live-venv.sh`, because the service account cannot read `/srv/hermes` — see
+[`docs/PITFALLS.md`](docs/PITFALLS.md).
 
 ---
 
 ## CLI reference
 
 ```bash
-# auto (default): up_to 4 + gradient crush (bimodal guard)
+# auto (default): auto-N palette (ADR-23)
 python -m src.cli input.jpg -o out.pdf
 
 # manual exact K: no crush — dual gray survives
@@ -155,7 +158,7 @@ python -m src.cli input.jpg -o out.svg --format svg
 ```
 POST /vectorize
   file=@logo.jpg    (multipart, required)
-  palette=auto|1-4  (default auto)
+  palette=auto|1-16 (default auto; UI exposes 1-8)
   format=pdf|svg    (default pdf)
 
 GET  /health
@@ -170,7 +173,7 @@ GET  /              (Web UI)
 - [`docs/STATUS.md`](docs/STATUS.md) — current state, what is broken, next action
 - [`docs/PRODUCT.md`](docs/PRODUCT.md) — why it exists, who it is for, what it must do
 - [`docs/PLAN.md`](docs/PLAN.md) — the migration to mainframe, parked items, risks
-- [`docs/DECISIONS.md`](docs/DECISIONS.md) — architecture decision records (ADR-1…24)
+- [`docs/DECISIONS.md`](docs/DECISIONS.md) — architecture decision records (ADR-1…26)
 - [`docs/PITFALLS.md`](docs/PITFALLS.md) — what already broke and how not to repeat it
 - [`docs/SPEC.md`](docs/SPEC.md) — product spec, user stories, success criteria
 - [`docs/EVAL-BASELINE.md`](docs/EVAL-BASELINE.md) — benchmark baselines and metric history
