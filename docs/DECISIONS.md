@@ -328,3 +328,52 @@ shelving.
   geometry passes.
 - Legacy `geometry.py` (`--geom`) remains as-is per ADR-14: off by
   default, experimental only.
+
+## ADR-22: The service moves to mainframe under its own subdomain
+
+**Context:** the service ran on the old VPS as `https://idealabs.co/trace/` — a path inside a vhost
+that also serves the rest of `idealabs.co`. mainframe hosts sites as `server_name` + certificate per
+site (`hermes-site-ctl`), and `idealabs.co` itself has not moved yet.
+
+**Decision:** the new address is `https://trace.idealabs.co`, with an A record straight to mainframe
+(`188.245.227.6`), DNS-only at first so the ACME challenge reaches nginx.
+
+**Consequences:**
+- Old links into `idealabs.co/trace/` need a redirect; it can only be written once `idealabs.co`
+  itself moves (parked in `docs/PLAN.md`).
+- The old host stays the address users reach until DNS is switched, so the two copies must not drift:
+  no code changes on the old side.
+- TLS is issued with `hermes-site-ctl cert logotrace` after the switch, from the hosting template.
+
+## ADR-23: The virtualenv is built on the system interpreter, inside the live tree
+
+**Context:** the hosting template starts `<site>/venv/bin/uvicorn app:app`. A virtualenv staged in the
+repository arrives with absolute shebangs into `/srv/hermes`, which the service account cannot enter
+(the unit dies with `203/EXEC`); the same happens with a venv created by `uv venv`, which points at
+uv's managed interpreter inside `/srv/hermes`.
+
+**Decision:** `deploy/live-venv.sh` creates the environment in the live tree with
+`/usr/bin/python3 -m venv` and installs `requirements.txt` with `uv pip install --python <venv>`.
+
+**Consequences:**
+- The interpreter is the distribution one (3.14.4 today), not the 3.11 the project used on the old
+  host; a distro upgrade means rebuilding the venv and re-running the tests.
+- The virtualenv is not in git (gitignored, and `sync` must never carry it) — it is a build artifact of
+  the deployment, not part of the source.
+- The old `PYTHONPATH=. .venv/bin/python ...` commands still work in the repository for development,
+  and the tests are run against the live interpreter after a deploy.
+
+## ADR-24: Project documentation lives in the repository
+
+**Context:** decisions, specs and QA notes had grown inside the repository, while status and history
+also lived on a wiki page; two copies drift and it becomes unclear which one is true.
+
+**Decision:** `AGENTS.md` plus `docs/{STATUS,PRODUCT,PLAN,DECISIONS,PITFALLS}.md` are the operational
+documentation and live with the code. The wiki keeps a passport: what the project is, where it runs,
+the address, versions, and the links back here.
+
+**Consequences:**
+- An agent working in the code (Claude Code on the Mac, Codex, Hermes on the server) reads the
+  repository; nothing important may exist only in the wiki.
+- The pre-existing `docs/` files (`SPEC.md`, `EVAL-BASELINE.md`, `QA-NOTES.md`, `RESEARCH.md`,
+  `ai-preflight-vision-qa.md`, `plans/`) stay where they are — they are the project's own material.

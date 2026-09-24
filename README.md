@@ -9,23 +9,30 @@ Drop a JPEG/PNG, get a clean PDF ready for print and Illustrator.
 
 ## Quick start
 
+Deployed on **mainframe**: code `/srv/hermes/projects/logotrace`, live tree `/srv/sites/logotrace`,
+virtualenv inside the live tree (built by `deploy/live-venv.sh`).
+
 ```bash
-cd /root/logotrace
-source .venv/bin/activate
-pip install -r requirements.txt
+cd /srv/hermes/projects/logotrace
+
+# Development environment (the deployed one is built by deploy/live-venv.sh)
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 # CLI
-PYTHONPATH=. python -m src.cli input/logo.jpg -o output/logo.pdf
+PYTHONPATH=. .venv/bin/python -m src.cli input/logo.jpg -o output/logo.pdf
 
 # CLI with upscale off (escape hatch)
-PYTHONPATH=. LOGOTRACE_UPSCALE=off python -m src.cli input/logo.jpg -o output/logo.pdf
+PYTHONPATH=. LOGOTRACE_UPSCALE=off .venv/bin/python -m src.cli input/logo.jpg -o output/logo.pdf
 
-# API
-uvicorn src.api:app --host 127.0.0.1 --port 8095
-curl -s -F file=@logo.jpg -F palette=auto http://127.0.0.1:8095/vectorize -o out.pdf
+# API — the deployed instance listens on 127.0.0.1:8301 behind nginx
+curl -s -F file=@input/logo.jpg -F palette=auto http://127.0.0.1:8301/vectorize -o out.pdf
 ```
 
-**Web UI:** https://idealabs.co/trace/ — paste/drop, Auto|1–4 colors, canvas preview + zoom/pan.
+**Deploy:** `sudo /usr/local/sbin/hermes-site-ctl sync logotrace` — copies the staged tree into the
+live one and restarts the unit. After a fresh `create`, or after a distro upgrade, run
+`bash deploy/live-venv.sh` first.
+
+**Web UI:** https://trace.idealabs.co/ — paste/drop, Auto|1–4 colors, canvas preview + zoom/pan.
 
 ---
 
@@ -116,11 +123,15 @@ logotrace/
     eval.py                    # benchmark harness
   static/                      # Web UI (html/css/js + pdf.js)
   tests/                       # pytest
-  docs/                        # SPEC, DECISIONS, EVAL-BASELINE, QA-NOTES
-  deploy/                      # nginx snippet for idealabs.co/trace
-  input/                       # sample_01..sample_10 + ui_* debug dumps
+  docs/                        # STATUS, PRODUCT, PLAN, DECISIONS, PITFALLS + SPEC, EVAL-BASELINE, QA-NOTES
+  deploy/                      # live-venv.sh (builds the service venv in the live tree)
+  input/                       # sample_01..sample_11 + ui_* debug dumps
   output/                      # gitignored PDFs/SVGs
 ```
+
+The live copy lives at `/srv/sites/logotrace` and is owned by `site-logotrace`; it is only ever
+written by `hermes-site-ctl sync`. The service virtualenv is built there by `deploy/live-venv.sh`,
+because the service account cannot read `/srv/hermes` — see `docs/PITFALLS.md`.
 
 ---
 
@@ -155,8 +166,13 @@ GET  /              (Web UI)
 
 ## Documentation
 
+- [`AGENTS.md`](AGENTS.md) — working agreement: roles, levels, git, verification
+- [`docs/STATUS.md`](docs/STATUS.md) — current state, what is broken, next action
+- [`docs/PRODUCT.md`](docs/PRODUCT.md) — why it exists, who it is for, what it must do
+- [`docs/PLAN.md`](docs/PLAN.md) — the migration to mainframe, parked items, risks
+- [`docs/DECISIONS.md`](docs/DECISIONS.md) — architecture decision records (ADR-1…24)
+- [`docs/PITFALLS.md`](docs/PITFALLS.md) — what already broke and how not to repeat it
 - [`docs/SPEC.md`](docs/SPEC.md) — product spec, user stories, success criteria
-- [`docs/DECISIONS.md`](docs/DECISIONS.md) — architecture decision records (ADR-1…21)
 - [`docs/EVAL-BASELINE.md`](docs/EVAL-BASELINE.md) — benchmark baselines and metric history
 - [`docs/QA-NOTES.md`](docs/QA-NOTES.md) — manual QA rounds, sample results
 - [`docs/RESEARCH.md`](docs/RESEARCH.md) — tracer selection research
