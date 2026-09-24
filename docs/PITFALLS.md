@@ -31,6 +31,19 @@
   operator for the missing write bit.
 - **Rule:** in the live tree assume "write inside"; check before planning a delete.
 
+## 2026-09-24 — the old path prefix survived in the page as a `<base>` tag
+
+- **Symptom:** the site opened at `https://trace.idealabs.dev/` with no styling at all — plain HTML.
+- **Cause:** `static/index.html` carried `<base href="/trace/" />` from the days when the service lived
+  under `idealabs.co/trace/`. Every relative URL (`static/styles.css`, `static/app.js`) was therefore
+  requested as `/trace/static/...` → 404. Server-side checks missed it: `curl` on `/static/styles.css`
+  answers 200, because the file is served fine — the browser was asking for the wrong path.
+- **Fix:** the `<base>` tag is gone; `API_BASE` in `static/app.js` defaults to `/` and still honours a
+  base tag if a future deployment puts the service under a prefix.
+- **Rule:** moving a service from a path to its own hostname means hunting for path knowledge in the
+  front end — `<base>`, hard-coded prefixes, absolute asset URLs. And check pages the way a browser
+  does, not only with `curl` on the endpoints you expect.
+
 ## 2026-09-24 — a service can be built for the wrong domain name
 
 - **Symptom:** the site was created with `--domain trace.idealabs.co`, the owner pointed

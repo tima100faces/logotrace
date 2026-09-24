@@ -1,6 +1,10 @@
 (() => {
   "use strict";
 
+  // The service is served from the root of its own domain, so the default is "/".
+  // A <base> tag is honoured when one is present, which is what a deployment under a
+  // path prefix needs — do not reintroduce the old hard-coded "/trace/" prefix
+  // (see docs/PITFALLS.md: it silently broke every relative asset URL).
   const API_BASE = (() => {
     const b = document.querySelector("base");
     if (b && b.href) {
@@ -11,7 +15,6 @@
         /* ignore */
       }
     }
-    if (window.location.pathname.startsWith("/trace")) return "/trace/";
     return "/";
   })();
 
