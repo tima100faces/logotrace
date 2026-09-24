@@ -31,6 +31,20 @@
   operator for the missing write bit.
 - **Rule:** in the live tree assume "write inside"; check before planning a delete.
 
+## 2026-09-24 — `sync` mirrors the staged tree with deletion, so the venv must exist in the repo
+
+- **Symptom:** right after `hermes-site-ctl sync`, `venv/bin/python` was gone and the unit fell over;
+  the directory could not simply be recreated (`Permission denied`) because the agent has no write bit
+  on `/srv/sites/logotrace` itself.
+- **Cause:** the hosting script mirrors the staged tree into the live directory with deletion —
+  anything absent from the repository is removed, and `venv/` was absent.
+- **Fix:** keep the directory in the staged tree (`venv/.gitkeep`, with `venv/*` still ignored) so the
+  mirror keeps it, then build the environment inside it; `deploy/deploy.sh` does sync → venv →
+  restart → health in one command.
+- **Rule:** with a mirroring deploy, an empty directory that must survive belongs in the repository.
+  And note that the agent can only write *inside* existing directories of the live tree, never create
+  or remove entries at its top level.
+
 ## 2026-09-24 — Python cannot read a `pyvenv.cfg` owned by the agent
 
 - **Symptom:** `PermissionError: [Errno 13] Permission denied: '/srv/sites/logotrace/venv/pyvenv.cfg'`,

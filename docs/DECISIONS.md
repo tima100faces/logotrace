@@ -442,8 +442,10 @@ uv's managed interpreter inside `/srv/hermes`.
 **Consequences:**
 - The interpreter is the distribution one (3.14.4 today), not the 3.11 the project used on the old
   host; a distro upgrade means rebuilding the venv and re-running the tests.
-- The virtualenv is not in git (gitignored, and `sync` must never carry it) — it is a build artifact of
-  the deployment, not part of the source.
+- `sync` mirrors the staged tree **with deletion**, so the environment is rebuilt on every deploy —
+  `deploy/deploy.sh` chains sync → venv → restart → health. The `venv/` directory itself is kept in
+  the repository (`venv/.gitkeep`) so the mirror does not remove it; its contents are ignored.
+- The virtualenv is not in git — it is a build artifact of the deployment, not part of the source.
 - The repository copy stays useful for development: `python3 -m venv .venv` plus the same
   `requirements.txt`.
 

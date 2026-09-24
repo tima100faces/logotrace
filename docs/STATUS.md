@@ -12,7 +12,8 @@ Moved from the old VPS (`OpenClaw`, `/root/logotrace`) to mainframe on 2026-09-2
 |---|---|
 | Code | `/srv/hermes/projects/logotrace` (was `/root/logotrace` on the old host) |
 | Live tree | `/srv/sites/logotrace` · `systemctl is-active site-logotrace` → `active` |
-| Virtualenv | `/srv/sites/logotrace/venv`, built by `deploy/live-venv.sh` on the **system** interpreter (3.14.4) |
+| Virtualenv | `/srv/sites/logotrace/venv`, rebuilt by `deploy/deploy.sh` on the **system** interpreter (3.14.4); the empty directory is kept in the repository so it survives the mirroring deploy |
+| Deploy | `bash deploy/deploy.sh` — sync → virtualenv → restart → health (the venv must be rebuilt because `sync` deletes what the repository does not contain) |
 | Domain | `trace.idealabs.co` — vhost created, **TLS pending** (DNS still points at the old host) |
 | Vectorization | **blocked on a system package** — see below |
 

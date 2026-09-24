@@ -28,11 +28,12 @@ curl -s -F file=@input/logo.jpg -F palette=auto http://127.0.0.1:8301/vectorize 
 **Web UI:** https://trace.idealabs.co/ — paste/drop, Auto|1–8 colors, canvas preview + zoom/pan.
 
 **Deploy note:** the service runs on **mainframe** as `site-logotrace` (port 8301); the live tree is
-`/srv/sites/logotrace` and is only ever written by the hosting script:
+`/srv/sites/logotrace` and is only ever written by the hosting script. One command does the whole
+deploy — mirror the tree, rebuild the virtualenv (`sync` deletes what the repository does not
+contain), restart, check health:
 
 ```bash
-sudo /usr/local/sbin/hermes-site-ctl sync logotrace   # staged tree → live, restarts the unit
-bash deploy/live-venv.sh                              # after a fresh create or a distro upgrade
+bash deploy/deploy.sh
 ```
 
 ---

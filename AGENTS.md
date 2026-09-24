@@ -11,9 +11,9 @@
   built by `deploy/live-venv.sh`, because the site account cannot read `/srv/hermes`.
 - **Start:** `PYTHONPATH=. .venv/bin/python -m src.cli input/logo.jpg -o output/logo.pdf` for the CLI ·
   `systemctl is-active site-logotrace` for the service (port 8301).
-- **Deploy:** `sudo /usr/local/sbin/hermes-site-ctl sync logotrace` (stage → live, then restart).
-  First install or interpreter rebuild: `bash deploy/live-venv.sh`, then
-  `sudo /usr/local/sbin/hermes-site-ctl restart logotrace`.
+- **Deploy:** `bash deploy/deploy.sh` — mirrors the staged tree into the live one, rebuilds the
+  virtualenv (`sync` deletes whatever the repository does not contain), restarts the unit and checks
+  `/health`. `deploy/live-venv.sh` alone rebuilds just the environment.
 - **Tests / checks:** `python -m pytest tests/test_pipeline.py tests/test_api.py -q` (safe subset —
   the eval tests load real images and can run out of memory) · `curl -s localhost:8301/health` ·
   `python -m src.eval input/ --matrix --colors 4` for the quality matrix.
