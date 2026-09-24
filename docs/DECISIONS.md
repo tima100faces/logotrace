@@ -417,17 +417,22 @@ changes.
 
 **Context:** the service ran on the old VPS as `https://idealabs.co/trace/` — a path inside a vhost
 that also serves the rest of `idealabs.co`. mainframe hosts sites as `server_name` + certificate per
-site (`hermes-site-ctl`), and `idealabs.co` itself has not moved yet.
+site (`hermes-site-ctl`), and `idealabs.co` itself has not moved yet. The owner's services live on
+`idealabs.dev` (`share.idealabs.dev`), and he pointed `trace.idealabs.dev` at mainframe
+(`188.245.227.6`), DNS-only.
 
-**Decision:** the new address is `https://trace.idealabs.co`, with an A record straight to mainframe
-(`188.245.227.6`), DNS-only at first so the ACME challenge reaches nginx.
+**Decision:** the new address is `https://trace.idealabs.dev`, site slug `trace`, and TLS is issued by
+the hosting script's certbot step (Let's Encrypt, valid until 2026-12-23).
 
 **Consequences:**
 - Old links into `idealabs.co/trace/` need a redirect; it can only be written once `idealabs.co`
   itself moves (parked in `docs/PLAN.md`).
-- The old host stays the address users reach until DNS is switched, so the two copies must not drift:
-  no code changes on the old side.
-- TLS is issued with `hermes-site-ctl cert logotrace` after the switch, from the hosting template.
+- A site created earlier for the `.co` name (`logotrace`, port 8301) is now superfluous: it is removed
+  separately, and `hermes-site-ctl remove` is soft. The slug cannot be reused for a freshly created
+  site (the account survives), which is why the site is called `trace` while the project stays
+  `logotrace`.
+- The domain has no AAAA record: the hosting template writes IPv4-only vhosts, so an AAAA record would
+  send IPv6 clients to the board's default vhost. Keep it that way until the template is fixed.
 
 ## ADR-25: The virtualenv is built on the system interpreter, inside the live tree
 

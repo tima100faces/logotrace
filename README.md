@@ -21,14 +21,14 @@ PYTHONPATH=. .venv/bin/python -m src.cli input/logo.jpg -o output/logo.pdf
 # CLI with upscale off (escape hatch)
 PYTHONPATH=. LOGOTRACE_UPSCALE=off .venv/bin/python -m src.cli input/logo.jpg -o output/logo.pdf
 
-# API — the deployed instance listens on 127.0.0.1:8301 behind nginx
-curl -s -F file=@input/logo.jpg -F palette=auto http://127.0.0.1:8301/vectorize -o out.pdf
+# API — the deployed instance listens on 127.0.0.1:8302 behind nginx
+curl -s -F file=@input/logo.jpg -F palette=auto http://127.0.0.1:8302/vectorize -o out.pdf
 ```
 
-**Web UI:** https://trace.idealabs.co/ — paste/drop, Auto|1–8 colors, canvas preview + zoom/pan.
+**Web UI:** https://trace.idealabs.dev/ — paste/drop, Auto|1–8 colors, canvas preview + zoom/pan.
 
-**Deploy note:** the service runs on **mainframe** as `site-logotrace` (port 8301); the live tree is
-`/srv/sites/logotrace` and is only ever written by the hosting script. One command does the whole
+**Deploy note:** the service runs on **mainframe** as `site-trace` (port 8302); the live tree is
+`/srv/sites/trace` and is only ever written by the hosting script. One command does the whole
 deploy — mirror the tree, rebuild the virtualenv (`sync` deletes what the repository does not
 contain), restart, check health:
 
@@ -132,10 +132,9 @@ logotrace/
   output/                      # gitignored PDFs/SVGs
 ```
 
-The live copy lives at `/srv/sites/logotrace` and belongs to `site-logotrace`; only
-`hermes-site-ctl sync` writes there. The service virtualenv is built inside it by
-`deploy/live-venv.sh`, because the service account cannot read `/srv/hermes` — see
-[`docs/PITFALLS.md`](docs/PITFALLS.md).
+The live copy lives at `/srv/sites/trace` and belongs to `site-trace`; only `hermes-site-ctl sync`
+writes there. The service virtualenv is built inside it by `deploy/deploy.sh`, because the service
+account cannot read `/srv/hermes` — see [`docs/PITFALLS.md`](docs/PITFALLS.md).
 
 ---
 

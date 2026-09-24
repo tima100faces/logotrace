@@ -2,20 +2,24 @@
 
 **Updated:** 2026-09-24 · **Stage:** migration to mainframe (in progress)
 
-## Now — the migration is not finished until
+## Now — the migration is almost done
 
-1. `librsvg2-bin` is installed on mainframe (owner) — without it SVG→PDF and the output self-check do
-   not run, so the service cannot vectorize at all.
-2. End-to-end check on a real sample through the public URL: PDF and SVG, colour headers present
-   (`X-LogoTrace-Colors`, `X-LogoTrace-Colors-Mode`), the file opens in Illustrator.
-3. `pytest tests/test_api.py tests/test_pipeline.py` green (12/12) inside the live virtualenv.
-4. DNS: `trace.idealabs.co` → `188.245.227.6`, DNS-only at first, then
-   `sudo hermes-site-ctl cert logotrace`, then a check from outside (`curl -4` and `curl -6`, plus the
-   certificate subject and dates).
-5. README and the wiki passport carry the new address.
-6. Only afterwards, as a separate explicitly approved step: retire the old copy on OpenClaw — the
-   systemd unit, the nginx `location /trace/` block and `/root/logotrace`. Keep the old tree until the
-   new URL is verified from outside.
+Done on 24.09.2026: the code moved, the service runs as `site-trace` on port 8302, HTTPS
+<https://trace.idealabs.dev> is live with a Let's Encrypt certificate (valid until 2026-12-23), and SVG
+output was verified end to end from outside.
+
+What is left:
+
+1. `poppler-utils` installed on mainframe (owner) — it provides `pdftoppm`, which the self-check of a
+   PDF output needs. Until then `format=pdf` answers 422 while `format=svg` works.
+2. PDF verified end to end through the public URL, the suite green (12/12), and one result opened in
+   Illustrator.
+3. The stray `logotrace` site on mainframe removed — it was created for the `trace.idealabs.co` name
+   before the owner pointed the domain at `trace.idealabs.dev`. Separate, explicitly approved step
+   (`hermes-site-ctl remove` is soft: the account, the live directory and the vhost file stay behind
+   and need one root pass).
+4. The old copy on OpenClaw retired — the systemd unit, the nginx `location /trace/` block and
+   `/root/logotrace` — after the owner confirms the new address is the one to keep.
 
 ## Parked (deliberately not now)
 

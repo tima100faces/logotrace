@@ -16,13 +16,13 @@
 # Usage: bash deploy/live-venv.sh [/srv/sites/logotrace]
 set -euo pipefail
 
-SITE_DIR="${1:-/srv/sites/logotrace}"
+SITE_DIR="${1:-/srv/sites/trace}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY_SYSTEM="${PY_SYSTEM:-/usr/bin/python3}"
 UV="${UV:-$HOME/.hermes/bin/uv}"
 
 if [ ! -d "$SITE_DIR" ]; then
-  echo "no live directory at $SITE_DIR — run 'hermes-site-ctl create logotrace' first" >&2
+  echo "no live directory at $SITE_DIR — run 'hermes-site-ctl create trace --domain trace.idealabs.dev' first" >&2
   exit 1
 fi
 

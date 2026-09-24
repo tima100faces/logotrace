@@ -11,40 +11,43 @@ Moved from the old VPS (`OpenClaw`, `/root/logotrace`) to mainframe on 2026-09-2
 | Piece | State |
 |---|---|
 | Code | `/srv/hermes/projects/logotrace` (was `/root/logotrace` on the old host) |
-| Live tree | `/srv/sites/logotrace` · `systemctl is-active site-logotrace` → `active` |
-| Virtualenv | `/srv/sites/logotrace/venv`, rebuilt by `deploy/deploy.sh` on the **system** interpreter (3.14.4); the empty directory is kept in the repository so it survives the mirroring deploy |
+| Site | `trace` → live tree `/srv/sites/trace`, `systemctl is-active site-trace` → `active`, port 8302 |
+| Address | <https://trace.idealabs.dev> — live, Let's Encrypt certificate valid until 2026-12-23, checked from outside over IPv4 |
+| Virtualenv | `/srv/sites/trace/venv`, rebuilt by `deploy/deploy.sh` on the **system** interpreter (3.14.4); the empty directory is kept in the repository so it survives the mirroring deploy |
 | Deploy | `bash deploy/deploy.sh` — sync → virtualenv → restart → health (the venv must be rebuilt because `sync` deletes what the repository does not contain) |
-| Domain | `trace.idealabs.co` — vhost created, **TLS pending** (DNS still points at the old host) |
-| Vectorization | **blocked on a system package** — see below |
+| SVG output | **works** — `format=svg` returns 200 with a 386 KB VTracer file |
+| PDF output | **blocked on one more system package** — see below |
 
 ## What works
 
-- Service starts and stays up; `/health` and the web UI answer through nginx — checked with
-  `curl -k --resolve trace.idealabs.co:443:127.0.0.1 https://trace.idealabs.co/` (200, 3 744 bytes).
-- `PYTHONPATH=. venv/bin/python -m pytest tests/test_pipeline.py tests/test_api.py -q` →
-  `11 passed, 1 failed` (the failure is the missing system library, see below).
+- HTTPS from the outside: `curl -4 https://trace.idealabs.dev/health` → `{"status":"ok","version":"0.4.0"}`;
+  certificate subject `CN=trace.idealabs.dev`, issuer Let's Encrypt, valid until 2026-12-23.
+- The web UI is served (200) and so is `/static/*`.
+- `format=svg` vectorization end to end, self-check included: 200, 386 308 bytes.
+- `PYTHONPATH=. /srv/sites/trace/venv/bin/python3 -m pytest tests/test_pipeline.py tests/test_api.py -q`
+  → **16 passed, 4 failed**; every failure is a PDF path that waits for `pdftoppm`
+  (`test_vectorize_file_pdf`, `test_vectorize_bytes_pdf`, `test_vectorize_endpoint_pdf`,
+  `test_vectorize_palette_auto_header`).
 
 ## What is broken
 
-- **`/vectorize` answers 422** — `output failed self-check: rsvg-convert required for verify`.
-  `pipeline.vectorize_bytes` always verifies its output by rasterizing it, and the rasterizer needs
-  `rsvg-convert`; the same binary is what converts SVG into PDF. `librsvg2-bin` is not installed on
-  mainframe. Fix is one command by the owner: `apt install -y librsvg2-bin`. Until then the service is
-  up but produces nothing.
-- `tests/test_pipeline.py::test_vectorize_file_pdf` fails for the same reason (`OSError: no library`).
-- No TLS certificate yet: DNS for `trace.idealabs.co` has not been switched to the new host.
-
-## Also true, not broken
-
-- `output/` and `input/` are copied into the live tree with the rest of the repository (they are not
-  excluded from `sync`). Harmless but noisy: ~43 MB of samples and past runs travel on every deploy.
+- **`format=pdf` answers 422** — `output failed self-check: need pdftoppm or ImageMagick convert to
+  rasterize PDF`. `rsvg-convert` now turns SVG into PDF (installed 24.09), but the self-check of a PDF
+  output rasterizes the first page and for that `src/verify.py` looks for `pdftoppm` (package
+  `poppler-utils`) or ImageMagick — neither is installed on mainframe. The old host had `pdftocairo`,
+  so this is a missing piece of the same set. One command by the owner fixes it.
+- The old site is still running on the old host and still answers `idealabs.co/trace/` — to be retired
+  only after the owner agrees (the new address is already verified from outside).
+- No AAAA record for the domain, so IPv6 clients cannot reach it at all (which is at least safe: the
+  hosting template writes IPv4-only vhosts, and an AAAA record would send them to the board's default
+  vhost).
 
 ## Next
 
-1. Owner: `apt install -y librsvg2-bin` on mainframe.
-2. Owner: point `trace.idealabs.co` (A record) at `188.245.227.6`, DNS-only (grey cloud) so the
-   certbot HTTP-01 challenge reaches nginx; then `sudo hermes-site-ctl cert logotrace`.
-3. Then: end-to-end check through the public URL — PDF and SVG for a real sample, both check out, and
-   the test suite green (12/12).
-4. Later, and only on an explicit command: retire the old copy (`/root/logotrace`, `logotrace.service`
-   and the nginx `location /trace/` block on OpenClaw) after the new URL is verified from outside.
+1. Owner: `apt install -y poppler-utils` on mainframe (gives `pdftoppm`), then PDF output works.
+2. Then: verify PDF end to end through the public URL, run the test suite (12/12), open the result in
+   Illustrator once.
+3. Then, as a separate explicitly approved step: retire the old copy — `remove logotrace` on mainframe
+   (the `.co` site created by mistake), and on OpenClaw the unit, the nginx `location /trace/` block
+   and `/root/logotrace`.
+4. Parked: a redirect from `idealabs.co/trace/` once `idealabs.co` itself moves to mainframe.

@@ -31,6 +31,18 @@
   operator for the missing write bit.
 - **Rule:** in the live tree assume "write inside"; check before planning a delete.
 
+## 2026-09-24 — a service can be built for the wrong domain name
+
+- **Symptom:** the site was created with `--domain trace.idealabs.co`, the owner pointed
+  `trace.idealabs.dev` at the host instead, and the name could not simply be changed.
+- **Cause:** `hermes-site-ctl` has no "change domain" subcommand — `--domain` is baked into the vhost
+  and the `.domain` file at `create` time — and recreating the same slug fails because the `site-<slug>`
+  account survives `remove`.
+- **Fix:** create a second site under a new slug (`trace`) for the right domain; retire the first one
+  later (soft delete, one root pass to clean the leftovers).
+- **Rule:** confirm the exact domain with the owner *before* `create`, and prefer the domain the rest of
+  the family already uses (`share.idealabs.dev` → `.dev`).
+
 ## 2026-09-24 — `sync` mirrors the staged tree with deletion, so the venv must exist in the repo
 
 - **Symptom:** right after `hermes-site-ctl sync`, `venv/bin/python` was gone and the unit fell over;

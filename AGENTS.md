@@ -1,23 +1,24 @@
 # logotrace
 
 - **What it is:** flat-logo raster (JPEG/PNG) → clean RGB vector PDF, ready for print and for
-  Illustrator. Live at <https://trace.idealabs.co>.
+  Illustrator. Live at <https://trace.idealabs.dev>.
 - **Level:** Project
 - **Stack:** Python 3 (FastAPI + uvicorn) behind nginx, static HTML/JS UI; VTracer 0.6.4 as a bundled
-  binary (`bin/vtracer`); `rsvg-convert` (system package `librsvg2-bin`) for SVG→PDF and for the
-  output self-check.
-- **Where it runs:** mainframe. Code `/srv/hermes/projects/logotrace`; live tree `/srv/sites/logotrace`
-  (owned by `site-logotrace`, never edited by hand); the virtualenv lives **in the live tree** and is
-  built by `deploy/live-venv.sh`, because the site account cannot read `/srv/hermes`.
+  binary (`bin/vtracer`); system helpers `rsvg-convert` (SVG→PDF) and `pdftoppm` (renders a PDF for
+  the self-check) — packages `librsvg2-bin` and `poppler-utils`.
+- **Where it runs:** mainframe. Code `/srv/hermes/projects/logotrace`; site `trace`, live tree
+  `/srv/sites/trace` (owned by `site-trace`, never edited by hand), unit `site-trace`, port 8302; the
+  virtualenv lives **in the live tree** and is built by `deploy/deploy.sh`, because the service
+  account cannot read `/srv/hermes`.
 - **Start:** `PYTHONPATH=. .venv/bin/python -m src.cli input/logo.jpg -o output/logo.pdf` for the CLI ·
-  `systemctl is-active site-logotrace` for the service (port 8301).
+  `systemctl is-active site-trace` for the service.
 - **Deploy:** `bash deploy/deploy.sh` — mirrors the staged tree into the live one, rebuilds the
   virtualenv (`sync` deletes whatever the repository does not contain), restarts the unit and checks
   `/health`. `deploy/live-venv.sh` alone rebuilds just the environment.
 - **Tests / checks:** `python -m pytest tests/test_pipeline.py tests/test_api.py -q` (safe subset —
-  the eval tests load real images and can run out of memory) · `curl -s localhost:8301/health` ·
+  the eval tests load real images and can run out of memory) · `curl -s localhost:8302/health` ·
   `python -m src.eval input/ --matrix --colors 4` for the quality matrix.
-- **Do not touch without asking:** `/srv/sites/logotrace` (deploy replaces the whole tree),
+- **Do not touch without asking:** `/srv/sites/trace` (deploy replaces the whole tree),
   `bin/vtracer`, the baseline numbers in `docs/EVAL-BASELINE.md`.
 - **Licence:** GPL-3.0-or-later (`LICENSE`, `NOTICE`); VTracer keeps its own MIT licence.
 
