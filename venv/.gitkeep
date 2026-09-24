@@ -1,0 +1,2 @@
+# Keeps the venv directory alive across sync: the live tree mirrors this repo with deletion,
+# and the service virtualenv is built inside that directory on the server.
